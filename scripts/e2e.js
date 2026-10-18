@@ -1,4 +1,5 @@
 // End-to-end check against a running server: node scripts/e2e.js [baseUrl]
+// Start the server with ADMIN_EMAILS=demo@coffeebuds.app STATS_TOKEN=e2e-stats-token DISABLE_RATE_LIMIT=1 (see README).
 const BASE = process.argv[2] || 'http://localhost:3000';
 const assert = require('node:assert');
 function client() {
@@ -131,5 +132,52 @@ const inTwoDays = new Date(Date.now() + 2 * 864e5).toISOString();
   const r2b = await maya('/posts?limit=2&before=' + r.data.next_before); assert.ok(r2b.data.items.every((p) => p.id < r.data.next_before)); ok('feed newest-first with cursor pagination');
   r = await taylor('/posts/' + postId, 'DELETE'); assert.equal(r.status, 200); x = await fetch(BASE + '/img/' + imgId); assert.equal(x.status, 404); ok('delete own post removes its image');
   r = await fetch(BASE + '/api/posts'); assert.equal(r.status, 401); ok('feed requires login');
+
+  // ---------- Moderation: admin page + API ----------
+  const TOKEN = process.env.E2E_STATS_TOKEN || 'e2e-stats-token';
+  x = await fetch(BASE + '/admin'); assert.equal(x.status, 404); ok('/admin refused (404) when logged out');
+  x = await fetch(BASE + '/admin', { headers: { cookie: taylor.cookie } }); assert.equal(x.status, 404); ok('/admin refused for non-admin');
+  r = await taylor('/admin/overview'); assert.equal(r.status, 404); r = await taylor('/admin/posts/1/hide', 'POST'); assert.equal(r.status, 404); ok('admin API refused for non-admin');
+  assert.equal((await demo('/me')).data.is_admin, true); assert.equal((await taylor('/me')).data.is_admin, false); ok('is_admin flag only for ADMIN_EMAILS');
+  x = await fetch(BASE + '/admin', { headers: { cookie: demo.cookie } }); assert.equal(x.status, 200); ok('/admin served to admin');
+  x = await fetch(BASE + '/api/admin/overview', { headers: { cookie: demo.cookie } }); assert.equal(x.status, 200);
+  x = await fetch(BASE + '/api/admin/reports/1/dismiss', { method: 'POST', headers: { cookie: demo.cookie, 'Content-Type': 'application/json' }, body: '{}' }); assert.equal(x.status, 403); ok('admin actions CSRF-protected');
+  // a fresh post by jordan, reported by maya
+  const ju = await up(jordan, '/uploads', exifJpeg); const jp = (await jordan('/posts', 'POST', { image_id: ju.data.id, caption: 'jordan cafe pic' })).data.id;
+  await maya(`/posts/${jp}/report`, 'POST', { reason: 'spam link in caption' });
+  r = await demo('/admin/overview'); const rep = r.data.reports.find((z) => z.post_id === jp);
+  assert.ok(rep && rep.reason === 'spam link in caption' && rep.post_image && rep.reporter_name === 'Maya Chen'); assert.ok(r.data.posts.length <= 50 && r.data.counts.open_reports >= 1);
+  assert.ok(!JSON.stringify(r.data).includes('@')); ok('admin overview lists open reports with preview, recent posts, counts (no emails)');
+  // machine API
+  x = await fetch(BASE + '/api/mod/queue'); assert.equal(x.status, 401); x = await fetch(BASE + '/api/mod/queue', { headers: { Authorization: 'Bearer wrong' } }); assert.equal(x.status, 401); ok('mod API requires Bearer token');
+  x = await fetch(BASE + '/api/mod/queue?token=' + TOKEN); assert.equal(x.status, 401); ok('mod API rejects token in query string');
+  const sinceIso = new Date(Date.now() - 3600e3).toISOString();
+  x = await fetch(BASE + '/api/mod/queue?since=' + encodeURIComponent(sinceIso), { headers: { Authorization: 'Bearer ' + TOKEN } }); const q = await x.json();
+  assert.equal(x.status, 200); const qr = q.reports.find((z) => z.post?.id === jp); assert.ok(qr && qr.reason && qr.target_user.name === 'Jordan Brooks' && /^https?:\/\/.+\/img\/[a-f0-9]{32}$/.test(qr.post.image_url));
+  assert.ok(q.posts.some((p) => p.id === jp && p.user.id === jordanId)); assert.ok(q.photos.some((p) => p.type === 'avatar'));
+  assert.ok(!JSON.stringify(q).match(/@|password|"lat"/)); ok('mod queue: reports, posts, photos with absolute URLs, no emails');
+  x = await fetch(BASE + '/api/mod/queue?since=nonsense', { headers: { Authorization: 'Bearer ' + TOKEN } }); assert.equal(x.status, 400); ok('mod queue validates since');
+  const act = (body) => fetch(BASE + '/api/mod/action', { method: 'POST', headers: { Authorization: 'Bearer ' + TOKEN, 'Content-Type': 'application/json' }, body: JSON.stringify(body) }).then(async (z) => ({ status: z.status, data: await z.json() }));
+  r = await act({ type: 'delete_user', id: jordanId }); assert.equal(r.status, 400); ok('mod API has no user deletion');
+  r = await act({ type: 'hide_post', id: 999999 }); assert.equal(r.status, 404);
+  r = await act({ type: 'hide_post', id: jp, reason: 'spam' }); assert.equal(r.status, 200);
+  assert.ok(!(await maya('/posts')).data.items.some((p) => p.id === jp)); x = await fetch(BASE + '/img/' + ju.data.id); assert.equal(x.status, 200); ok('hide_post soft-hides from the feed (image kept)');
+  r = await demo('/admin/overview'); assert.ok(r.data.posts.find((p) => p.id === jp).hidden_at); assert.ok(r.data.actions.some((a) => a.actor === 'bubba-monitor' && a.action === 'hide_post' && a.target_id === jp)); ok('monitor action logged as bubba-monitor');
+  r = await demo(`/admin/posts/${jp}/unhide`, 'POST', {}); assert.ok((await maya('/posts')).data.items.some((p) => p.id === jp)); ok('admin can unhide');
+  r = await act({ type: 'dismiss_report', id: rep.id }); assert.equal(r.status, 200); assert.ok(!(await demo('/admin/overview')).data.reports.some((z) => z.id === rep.id)); ok('dismiss_report via API');
+  r = await act({ type: 'suspend_user', id: (await demo('/me')).data.id }); assert.equal(r.status, 403); ok('monitor cannot suspend an admin');
+  // suspension via admin
+  const sam = client(); await sam('/login', 'POST', { email: 'sam@example.com', password: 'coffee123' }); const samId = (await sam('/me')).data.id;
+  const su = await up(sam, '/uploads', exifJpeg); const sp = (await sam('/posts', 'POST', { image_id: su.data.id, caption: 'sam pic' })).data.id;
+  r = await demo(`/admin/users/${samId}/suspend`, 'POST', { reason: 'harassment' }); assert.equal(r.status, 200);
+  r = await sam('/me'); assert.equal(r.status, 401); ok('suspension signs the user out immediately');
+  r = await sam('/login', 'POST', { email: 'sam@example.com', password: 'coffee123' }); assert.equal(r.status, 403); ok('suspended user cannot log in');
+  assert.ok(!(await maya('/posts')).data.items.some((p) => p.id === sp)); ok("suspended user's posts hidden");
+  r = await demo(`/admin/users/${(await demo('/me')).data.id}/suspend`, 'POST', {}); assert.equal(r.status, 400); ok('admin cannot suspend themselves');
+  r = await demo(`/admin/users/${samId}/unsuspend`, 'POST', {}); r = await sam('/login', 'POST', { email: 'sam@example.com', password: 'coffee123' }); assert.equal(r.status, 200); ok('unsuspend restores login');
+  r = await demo(`/admin/posts/${sp}`, 'DELETE', {}); x = await fetch(BASE + '/img/' + su.data.id); assert.equal(x.status, 404); ok('admin delete post removes image');
+  r = await demo(`/admin/users/${samId}`, 'DELETE', { reason: 'test' }); assert.equal(r.status, 200);
+  r = await sam('/me'); assert.equal(r.status, 401); r = await sam('/login', 'POST', { email: 'sam@example.com', password: 'coffee123' }); assert.equal(r.status, 401); ok('admin delete user removes account and sessions');
+  r = await demo('/admin/overview'); for (const a of ['suspend_user', 'unsuspend_user', 'delete_post', 'delete_user', 'unhide_post']) assert.ok(r.data.actions.some((z) => z.action === a), a); ok('every admin action logged');
   console.log('\nAll E2E checks passed.');
 })().catch((e) => { console.error('E2E FAILED:', e); process.exit(1); });

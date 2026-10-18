@@ -48,13 +48,15 @@ const setBadge = (n) => { const b = $('#badge'); b.hidden = !n; b.textContent = 
 async function refreshMe() { try { me = await api('/me'); setBadge(me.unread); } catch { me = null; } }
 
 // ---------- Router ----------
-const routes = { login: authView('login'), signup: authView('signup'), inbox, wall, new: newMeetup, meetups, profile, notifications, invite: inviteDetail };
+const routes = { login: authView('login'), signup: authView('signup'), inbox, wall, admin: adminView, new: newMeetup, meetups, profile, notifications, invite: inviteDetail };
 async function router() {
-  const [, name = 'inbox', arg] = location.hash.split('/');
+  // /admin is a real server path (only served to admins); every other view is a hash route on /.
+  if (location.pathname === '/admin' && location.hash && location.hash !== '#/admin') return location.replace('/' + location.hash);
+  const [, name = location.pathname === '/admin' ? 'admin' : 'inbox', arg] = location.hash.split('/');
   if (!me && !['login', 'signup'].includes(name)) await refreshMe();
   if (!me && !['login', 'signup'].includes(name)) return (location.hash = '#/login');
   if (me && ['login', 'signup'].includes(name)) return (location.hash = '#/inbox');
-  $('#topbar').hidden = !me; app.className = me ? 'container' : '';
+  $('#topbar').hidden = !me; $('#adminLink').hidden = !me?.is_admin; app.className = me ? 'container' : '';
   document.body.className = 'page-' + (routes[name] ? name : 'inbox');
   document.querySelectorAll('[data-nav]').forEach((a) => a.classList.toggle('active', a.dataset.nav === name));
   app.innerHTML = '<p class="muted">Brewing…</p>';
@@ -372,6 +374,50 @@ async function wall() {
     try { const r = await api(`/posts?limit=12&before=${next}`); next = r.next_before; $('#wall').insertAdjacentHTML('beforeend', r.items.map(postCard).join('')); bindPosts(); } catch (e) { toast(e.message); } finally { loading = false; } };
   const sentinel = document.createElement('div'); sentinel.style.height = '1px'; $('#wallEnd').after(sentinel);
   new IntersectionObserver((es, ob) => { if (!document.body.contains(sentinel)) return ob.disconnect(); if (es[0].isIntersecting) more(); }, { rootMargin: '600px' }).observe(sentinel);
+}
+
+// ---------- Admin (moderation) ----------
+async function adminView() {
+  if (!me.is_admin) { app.innerHTML = empty('🔒', 'Not available', 'This page is for CoffeeBuds moderators.'); return; }
+  const d = await api('/admin/overview');
+  const tile = (n, l) => `<div class="card stat"><div class="n">${n}</div><div class="small muted">${l}</div></div>`;
+  const userBtns = (id, name, suspended) => id == null || id === me.id ? '' : `${suspended ? `<button class="btn ghost sm" data-act="unsuspend" data-id="${id}" data-name="${esc(name)}">Unsuspend</button>`
+    : `<button class="btn ghost sm" data-act="suspend" data-id="${id}" data-name="${esc(name)}">Suspend user</button>`}<button class="btn ghost sm danger" data-act="deluser" data-id="${id}" data-name="${esc(name)}">Delete user</button>`;
+  const when = (ts) => ts ? fmtDate(ts.replace(' ', 'T') + 'Z') : '';
+  app.innerHTML = `<div class="pagehead"><h1>Moderation</h1><p style="margin:4px 0 0">Keep CoffeeBuds kind and safe.</p></div>
+  <div class="stats-grid">${tile(d.counts.open_reports, 'Open reports')}${tile(d.counts.posts, 'Photos')}${tile(d.counts.hidden_posts, 'Hidden')}${tile(d.counts.users, 'Members')}${tile(d.counts.suspended, 'Suspended')}${tile(d.counts.invites, 'Invites')}</div>
+  <div class="section-title"><h2>Open reports</h2><span class="small muted">${d.reports.length}</span></div>
+  <div class="stack">${d.reports.length ? d.reports.map((r) => `<article class="card report" data-report="${r.id}">
+    ${r.post_image ? `<a href="${esc(r.post_image)}" target="_blank" rel="noopener" class="thumb"><img src="${esc(r.post_image)}" alt="Reported photo" loading="lazy"></a>` : '<div class="thumb none">👤</div>'}
+    <div><div class="row" style="gap:8px"><span class="pill ${r.post_id ? 'status-pending' : 'learn'}">${r.post_id ? 'Photo' : 'User'}</span>${r.post_hidden_at ? '<span class="pill status-declined">hidden</span>' : ''}${r.target_suspended ? '<span class="pill status-declined">suspended</span>' : ''}<span class="small muted">${when(r.created_at)}</span></div>
+      <p class="reason">“${esc(r.reason)}”</p>
+      <div class="small muted">Reported <b>${esc(r.target_name || 'deleted user')}</b> (#${r.reported_id}) · by ${esc(r.reporter_name || 'deleted user')} (#${r.reporter_id})${r.invite_topic ? ' · meetup: ' + esc(r.invite_topic) : ''}</div>
+      ${r.post_caption ? `<div class="note">${esc(r.post_caption)}</div>` : ''}
+      <div class="row admin-actions"><button class="btn sm" data-act="dismiss" data-id="${r.id}">Dismiss</button>
+        ${r.post_id ? `${r.post_hidden_at ? `<button class="btn ghost sm" data-act="unhide" data-id="${r.post_id}">Unhide photo</button>` : `<button class="btn ghost sm" data-act="hide" data-id="${r.post_id}">Hide photo</button>`}<button class="btn ghost sm danger" data-act="delpost" data-id="${r.post_id}">Delete photo</button>` : ''}
+        ${r.target_name ? userBtns(r.reported_id, r.target_name, r.target_suspended) : ''}</div></div></article>`).join('') : empty('🕊️', 'No open reports', 'All quiet. Nice.')}</div>
+  <div class="section-title"><h2>Recent photos</h2><span class="small muted">last ${d.posts.length}</span></div>
+  ${d.posts.length ? `<div class="wall admin-wall">${d.posts.map((p) => `<figure class="post ${p.hidden_at ? 'is-hidden' : ''}"><img src="${esc(p.image_url)}" alt="" loading="lazy">
+    <figcaption>${p.caption ? `<p class="cap">${esc(p.caption)}</p>` : ''}<div class="small"><b>${esc(p.user_name)}</b> (#${p.user_id}) · <span class="muted">${when(p.created_at)}</span>${p.hidden_at ? ' · <span class="pill status-declined">hidden</span>' : ''}${p.user_suspended ? ' · <span class="pill status-declined">suspended</span>' : ''}</div>
+    <div class="row admin-actions">${p.hidden_at ? `<button class="btn ghost sm" data-act="unhide" data-id="${p.id}">Unhide</button>` : `<button class="btn ghost sm" data-act="hide" data-id="${p.id}">Hide</button>`}<button class="btn ghost sm danger" data-act="delpost" data-id="${p.id}">Delete</button>
+    ${p.user_suspended || p.user_id === me.id ? '' : `<button class="btn ghost sm" data-act="suspend" data-id="${p.user_id}" data-name="${esc(p.user_name)}">Suspend</button>`}</div></figcaption></figure>`).join('')}</div>` : '<p class="muted small">No photos yet.</p>'}
+  <div class="grid two" style="margin-top:24px;align-items:start">
+    <div class="card"><h3>Suspended members</h3>${d.suspended.length ? d.suspended.map((u) => `<div class="row between" style="margin:6px 0"><span>${esc(u.name)} <span class="small muted">#${u.id} · ${when(u.suspended_at)}</span></span><span class="row" style="gap:6px">${userBtns(u.id, u.name, true)}</span></div>`).join('') : '<p class="small muted">Nobody is suspended.</p>'}</div>
+    <div class="card"><h3>Recent actions</h3>${d.actions.length ? `<ul class="small actions-log">${d.actions.map((a) => `<li><b>${esc(a.action.replace(/_/g, ' '))}</b> ${esc(a.target_type)} #${a.target_id} <span class="muted">· ${esc(a.actor)} · ${when(a.created_at)}</span>${a.reason ? `<div class="muted">${esc(a.reason)}</div>` : ''}</li>`).join('')}</ul>` : '<p class="small muted">No actions yet.</p>'}</div></div>`;
+  const ACTS = {
+    dismiss: { url: (id) => `/admin/reports/${id}/dismiss`, msg: 'Report dismissed' },
+    hide: { url: (id) => `/admin/posts/${id}/hide`, msg: 'Photo hidden' },
+    unhide: { url: (id) => `/admin/posts/${id}/unhide`, msg: 'Photo visible again' },
+    delpost: { url: (id) => `/admin/posts/${id}`, method: 'DELETE', confirm: () => 'Permanently delete this photo? This cannot be undone.', msg: 'Photo deleted' },
+    suspend: { url: (id) => `/admin/users/${id}/suspend`, confirm: (n) => `Suspend ${n}? They will be signed out, can't log in or post, and their photos and invites are hidden.`, msg: 'User suspended', reason: true },
+    unsuspend: { url: (id) => `/admin/users/${id}/unsuspend`, msg: 'User unsuspended' },
+    deluser: { url: (id) => `/admin/users/${id}`, method: 'DELETE', confirm: (n) => `Permanently delete ${n} and ALL their data (photos, invites, RSVPs)? This cannot be undone.`, msg: 'User deleted', reason: true },
+  };
+  app.querySelectorAll('[data-act]').forEach((b) => (b.onclick = async () => {
+    const a = ACTS[b.dataset.act]; if (a.confirm && !confirm(a.confirm(b.dataset.name || 'this user'))) return;
+    const reason = a.reason ? prompt('Reason (optional, saved to the audit log):') ?? '' : '';
+    try { await api(a.url(b.dataset.id), { method: a.method || 'POST', body: { reason } }); toast(a.msg); adminView(); } catch (e) { toast(e.message); }
+  }));
 }
 
 // ---------- Notifications ----------

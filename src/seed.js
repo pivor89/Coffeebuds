@@ -35,26 +35,30 @@ async function seed() {
 }
 // Production clean-up (approved by Alex): delete every seeded sample account whose email EXACTLY matches the seed list above,
 // with their topics, invites (+ RSVPs/notifications), notifications, blocks, reports and sessions. No other account is touched.
+// Deletes a user and everything they own (topics, invites + RSVPs/notifications, posts + images, blocks, reports, sessions).
+async function deleteUserCascade(uid) {
+  await db.tx(async () => {
+    const inv = 'SELECT id FROM invites WHERE creator_id=?';
+    await db.run(`DELETE FROM invite_recipients WHERE user_id=? OR invite_id IN (${inv})`, [uid, uid]);
+    await db.run(`DELETE FROM notifications WHERE user_id=? OR invite_id IN (${inv})`, [uid, uid]);
+    await db.run(`DELETE FROM reports WHERE reporter_id=? OR reported_id=? OR invite_id IN (${inv}) OR post_id IN (SELECT id FROM posts WHERE user_id=?)`, [uid, uid, uid, uid]);
+    await db.run(`DELETE FROM images WHERE id IN (SELECT image_id FROM posts WHERE user_id=? OR invite_id IN (${inv}))`, [uid, uid]);
+    await db.run(`DELETE FROM posts WHERE user_id=? OR invite_id IN (${inv})`, [uid, uid]);
+    await db.run('DELETE FROM images WHERE owner_id=?', [uid]);
+    await db.run('DELETE FROM invites WHERE creator_id=?', [uid]);
+    await db.run('DELETE FROM topics WHERE user_id=?', [uid]);
+    await db.run('DELETE FROM blocks WHERE blocker_id=? OR blocked_id=?', [uid, uid]);
+    if (db.isPg) await db.run("DELETE FROM session WHERE (sess::jsonb->>'userId') = ?", [String(uid)]).catch(() => {});
+    else await db.run("DELETE FROM sessions WHERE json_extract(data,'$.userId') = ?", [uid]).catch(() => {});
+    await db.run('DELETE FROM users WHERE id=?', [uid]);
+  });
+}
 async function removeDemoAccounts() {
   let n = 0;
   for (const email of USERS.map((u) => u[0])) {
     const u = await db.get('SELECT id FROM users WHERE email=?', [email]);
     if (!u) continue;
-    await db.tx(async () => {
-      const inv = 'SELECT id FROM invites WHERE creator_id=?';
-      await db.run(`DELETE FROM invite_recipients WHERE user_id=? OR invite_id IN (${inv})`, [u.id, u.id]);
-      await db.run(`DELETE FROM notifications WHERE user_id=? OR invite_id IN (${inv})`, [u.id, u.id]);
-      await db.run(`DELETE FROM reports WHERE reporter_id=? OR reported_id=? OR invite_id IN (${inv})`, [u.id, u.id, u.id]);
-      await db.run(`DELETE FROM images WHERE id IN (SELECT image_id FROM posts WHERE user_id=? OR invite_id IN (${inv}))`, [u.id, u.id]).catch(() => {});
-      await db.run(`DELETE FROM posts WHERE user_id=? OR invite_id IN (${inv})`, [u.id, u.id]).catch(() => {});
-      await db.run('DELETE FROM images WHERE owner_id=?', [u.id]).catch(() => {});
-      await db.run('DELETE FROM invites WHERE creator_id=?', [u.id]);
-      await db.run('DELETE FROM topics WHERE user_id=?', [u.id]);
-      await db.run('DELETE FROM blocks WHERE blocker_id=? OR blocked_id=?', [u.id, u.id]);
-      if (db.isPg) await db.run("DELETE FROM session WHERE (sess::jsonb->>'userId') = ?", [String(u.id)]).catch(() => {});
-      else await db.run("DELETE FROM sessions WHERE json_extract(data,'$.userId') = ?", [u.id]).catch(() => {});
-      await db.run('DELETE FROM users WHERE id=?', [u.id]);
-    });
+    await deleteUserCascade(u.id);
     n++;
   }
   console.log(`Seed cleanup: deleted ${n} seeded sample account(s).`);
@@ -71,4 +75,4 @@ async function coarsenHomeLocations() {
   console.log(`Location migration: rounded ${before} home location(s) to ~1 km.`);
   return before;
 }
-module.exports = { seed, removeDemoAccounts, coarsenHomeLocations, USERS };
+module.exports = { deleteUserCascade, seed, removeDemoAccounts, coarsenHomeLocations, USERS };

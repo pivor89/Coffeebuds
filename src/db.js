@@ -62,6 +62,10 @@ CREATE TABLE IF NOT EXISTS posts (id SERIAL PRIMARY KEY, user_id INTEGER NOT NUL
   created_at TEXT DEFAULT ${PG_NOW});
 CREATE INDEX IF NOT EXISTS idx_posts_user ON posts(user_id);
 ALTER TABLE reports ADD COLUMN IF NOT EXISTS post_id INTEGER;
+ALTER TABLE users ADD COLUMN IF NOT EXISTS suspended_at TEXT;
+ALTER TABLE posts ADD COLUMN IF NOT EXISTS hidden_at TEXT;
+ALTER TABLE posts ADD COLUMN IF NOT EXISTS hidden_reason TEXT;
+CREATE TABLE IF NOT EXISTS admin_actions (id SERIAL PRIMARY KEY, actor TEXT NOT NULL, action TEXT NOT NULL, target_type TEXT NOT NULL, target_id INTEGER, reason TEXT, created_at TEXT DEFAULT ${PG_NOW});
 `;
 
 // ---------------- SQLite (sql.js) backend ----------------
@@ -77,7 +81,10 @@ const sqlite = {
       CREATE INDEX IF NOT EXISTS idx_invites_creator ON invites(creator_id);
       CREATE INDEX IF NOT EXISTS idx_recipients_user ON invite_recipients(user_id);
       CREATE INDEX IF NOT EXISTS idx_notifications_user ON notifications(user_id, is_read);`);
-    try { sdb.exec('ALTER TABLE reports ADD COLUMN post_id INTEGER'); } catch { /* already there */ }
+    for (const q of ['ALTER TABLE reports ADD COLUMN post_id INTEGER', 'ALTER TABLE users ADD COLUMN suspended_at TEXT', 'ALTER TABLE posts ADD COLUMN hidden_at TEXT', 'ALTER TABLE posts ADD COLUMN hidden_reason TEXT']) {
+      try { sdb.exec(q); } catch { /* column already there */ }
+    }
+    sdb.exec('CREATE TABLE IF NOT EXISTS admin_actions (id INTEGER PRIMARY KEY, actor TEXT NOT NULL, action TEXT NOT NULL, target_type TEXT NOT NULL, target_id INTEGER, reason TEXT, created_at TEXT DEFAULT CURRENT_TIMESTAMP)');
     sqlite.save();
   },
   save() { fs.writeFileSync(DB_PATH, Buffer.from(sdb.export())); },
@@ -131,7 +138,7 @@ const pg = {
   async run(sql, params) {
     let q = toPg(sql);
     // Mirror sqlite's last_insert_rowid() for tables with a serial id
-    const wantsId = /^\s*INSERT\s+INTO\s+(users|topics|shops|invites|notifications|reports|posts)\b/i.test(q) && !/RETURNING/i.test(q);
+    const wantsId = /^\s*INSERT\s+INTO\s+(users|topics|shops|invites|notifications|reports|posts|admin_actions)\b/i.test(q) && !/RETURNING/i.test(q);
     if (wantsId) q += ' RETURNING id';
     const r = await pg.client().query(q, params);
     return wantsId ? r.rows[0]?.id : undefined;

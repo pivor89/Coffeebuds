@@ -93,4 +93,4 @@ async function handler(req, res) {
   res.json(await summary());
 }
 
-module.exports = { init, recordVisit, middleware, summary, handler, day, addDays };
+module.exports = { safeEqual, init, recordVisit, middleware, summary, handler, day, addDays };

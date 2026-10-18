@@ -98,6 +98,21 @@ const issues = [];
   // demo sees RSVP notification + invite detail
   await demo.goto(BASE + '/#/notifications'); await demo.waitForSelector('.pagehead'); await shot(demo, 'notifications');
   const link = await demo.$('.notif'); if (link) { await link.click(); await demo.waitForSelector('#dmap'); await overflow(demo, 'detail'); await shot(demo, 'invite-detail', true); }
+  // --- moderation: maya reports a photo, admin (demo, via ADMIN_EMAILS) reviews it on /admin ---
+  maya.on('dialog', (dlg) => dlg.accept(dlg.type() === 'prompt' ? 'Looks like an ad, not a meetup' : undefined));
+  await maya.goto(BASE + '/#/wall'); await maya.waitForSelector('.wall .post [data-reportpost]', { timeout: 10000 }).catch(() => issues.push('[admin] no reportable post'));
+  await maya.click('.wall .post [data-reportpost]'); await maya.waitForTimeout(800);
+  if (!(await maya.isHidden('#adminLink'))) issues.push('[admin] Admin link visible to non-admin');
+  if (await demo.isHidden('#adminLink')) issues.push('[admin] Admin link hidden for admin (start server with ADMIN_EMAILS=demo@coffeebuds.app)');
+  await demo.click('#adminLink'); await demo.waitForSelector('.stats-grid', { timeout: 10000 }).catch(() => issues.push('[admin] admin page did not load'));
+  if (!(await demo.$('.report .thumb img'))) issues.push('[admin] reported photo preview missing');
+  await demo.waitForFunction(() => [...document.querySelectorAll('.report img, .admin-wall img')].every((i) => i.complete), null, { timeout: 10000 }).catch(() => {});
+  await overflow(demo, 'admin'); await demo.waitForTimeout(700); await demo.screenshot({ path: OUT + 'admin-' + mode + '.png', fullPage: true });
+  await demo.locator('.report').first().screenshot({ path: OUT + 'admin-' + mode + '-report.png' }).catch(() => {});
+  demo.once('dialog', (dlg) => dlg.accept()); await demo.click('.report [data-act="hide"]'); await demo.waitForSelector('.post.is-hidden', { timeout: 10000 }).catch(() => issues.push('[admin] hide did not apply'));
+  await demo.click('.report [data-act="dismiss"]'); await demo.waitForTimeout(800);
+  await demo.waitForTimeout(500); await demo.screenshot({ path: OUT + 'admin-' + mode + '-after-actions.png', fullPage: true });
+  await demo.click('.nav a[data-nav="inbox"]'); await demo.waitForSelector('#seg', { timeout: 10000 }).catch(() => issues.push('[admin] nav back from /admin failed'));
   // sign out
   await demo.goto(BASE + '/#/profile'); await demo.waitForSelector('#tlist');
   const lo = await demo.$('[data-logout]');

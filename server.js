@@ -5,7 +5,7 @@ const path = require('path');
 const helmet = require('helmet');
 const { rateLimit } = require('express-rate-limit');
 const db = require('./src/db');
-const { seed, removeDemoAccounts, coarsenHomeLocations } = require('./src/seed');
+const { seed, removeDemoAccounts, coarsenHomeLocations, deleteUserCascade } = require('./src/seed');
 const stats = require('./src/stats');
 const images = require('./src/images');
 const { findRecipients, normalizeTopic, haversineMiles, MATCH_RADIUS_MI } = require('./src/matching');
@@ -43,6 +43,7 @@ app.use(express.json({ limit: '20kb' }));
 // when the browser sends Origin, it must be our own host. Combined with SameSite=Lax cookies.
 app.use('/api', (req, res, next) => {
   if (['GET', 'HEAD', 'OPTIONS'].includes(req.method)) return next();
+  if (req.path.startsWith('/mod/')) return next(); // machine API: Bearer token only, no cookies -> not CSRF-able
   const origin = req.get('origin');
   let originOk = true;
   if (origin) { try { originOk = new URL(origin).host === req.get('host'); } catch { originOk = false; } }
@@ -105,13 +106,23 @@ const isId = (v) => /^\d{1,10}$/.test(String(v));
 const coarse = (n) => Math.round(Number(n) * 100) / 100;
 const blockedWith = (me) => db.all('SELECT blocked_id AS id FROM blocks WHERE blocker_id=? UNION SELECT blocker_id AS id FROM blocks WHERE blocked_id=?', [me, me])
   .then((r) => new Set(r.map((x) => x.id)));
-const auth = (req, res, next) => (req.session.userId ? next() : bad(res, 'Please log in.', 401));
+// Every authenticated request re-checks the account: deleted or suspended users lose access immediately.
+const auth = async (req, res, next) => {
+  if (!req.session.userId) return bad(res, 'Please log in.', 401);
+  const u = await db.get('SELECT email,suspended_at FROM users WHERE id=?', [req.session.userId]);
+  if (!u || u.suspended_at) { req.session.destroy(() => {}); return bad(res, u ? 'This account is suspended.' : 'Please log in.', u ? 403 : 401); }
+  req.userEmail = u.email; next();
+};
+const ADMIN_EMAILS = new Set(String(process.env.ADMIN_EMAILS || '').split(',').map((e) => e.trim().toLowerCase()).filter(Boolean));
+const isAdminEmail = (e) => ADMIN_EMAILS.has(String(e || '').toLowerCase());
+const adminAuth = (req, res, next) => auth(req, res, () => (isAdminEmail(req.userEmail) ? next() : bad(res, 'Not found', 404)));
 const isNum = (v) => v !== '' && v != null && !isNaN(Number(v));
 const validLatLng = (lat, lng) => isNum(lat) && isNum(lng) && Math.abs(lat) <= 90 && Math.abs(lng) <= 180;
 
 async function userPayload(id) {
   const u = await db.get('SELECT id,email,name,photo_url,location_label,lat,lng FROM users WHERE id=?', [id]);
   if (!u) return null;
+  u.is_admin = isAdminEmail(u.email);
   u.topics = await db.all('SELECT topic,label,role FROM topics WHERE user_id=? ORDER BY role,label', [id]);
   u.unread = (await db.get('SELECT COUNT(*) c FROM notifications WHERE user_id=? AND is_read=0', [id])).c;
   return u;
@@ -137,10 +148,11 @@ app.post('/api/signup', signupLimiter, async (req, res) => {
 app.post('/api/login', loginLimiter, async (req, res) => {
   const { email, password } = req.body || {};
   const pw = typeof password === 'string' ? password.slice(0, 128) : '';
-  const u = await db.get('SELECT id,password_hash FROM users WHERE email=?', [str(email, 254).toLowerCase()]);
+  const u = await db.get('SELECT id,password_hash,suspended_at FROM users WHERE email=?', [str(email, 254).toLowerCase()]);
   // Always run one bcrypt compare so response time doesn't reveal whether the email exists.
   const okPw = await bcrypt.compare(pw, u ? u.password_hash : DUMMY_HASH);
   if (!u || !okPw) return bad(res, 'Incorrect email or password.', 401);
+  if (u.suspended_at) return bad(res, 'This account is suspended. Contact support if you think this is a mistake.', 403);
   if (bcrypt.getRounds(u.password_hash) < BCRYPT_COST) await db.run('UPDATE users SET password_hash=? WHERE id=?', [await bcrypt.hash(pw, BCRYPT_COST), u.id]); // upgrade legacy cost-10 hashes
   const payload = await userPayload(u.id);
   req.session.regenerate((err) => { if (err) return bad(res, 'Session error.', 500); req.session.userId = u.id; res.json(payload); });
@@ -296,7 +308,7 @@ app.post('/api/invites', auth, inviteLimiter, async (req, res) => {
       const shop = await resolveShop(b, me);
       const id = await db.run('INSERT INTO invites(creator_id,shop_id,role,topic,topic_label,starts_at,note,max_attendees) VALUES (?,?,?,?,?,?,?,?)',
         [me, shop.id, b.role, topic, topicLabel, when.toISOString(), String(b.note || '').slice(0, 500) || null, max]);
-      const users = await db.all('SELECT id,lat,lng FROM users WHERE lat IS NOT NULL');
+      const users = await db.all('SELECT id,lat,lng FROM users WHERE lat IS NOT NULL AND suspended_at IS NULL');
       const topics = await db.all('SELECT user_id,topic,role FROM topics WHERE topic=?', [topic]);
       users.forEach((u) => (u.topics = topics.filter((t) => t.user_id === u.id)));
       const blocked = await blockedWith(me);
@@ -315,13 +327,13 @@ app.post('/api/invites', auth, inviteLimiter, async (req, res) => {
 // Same value/format as SQLite's datetime('now','-1 day'), computed in JS so it works on both backends.
 const oneDayAgo = () => new Date(Date.now() - 864e5).toISOString().replace('T', ' ').slice(0, 19);
 const INVITE_SELECT = `SELECT i.*, s.name shop_name, s.address shop_address, s.lat shop_lat, s.lng shop_lng,
-  u.name creator_name, u.photo_url creator_photo,
+  u.name creator_name, u.photo_url creator_photo, CASE WHEN u.suspended_at IS NULL THEN 0 ELSE 1 END creator_suspended,
   (SELECT COUNT(*) FROM invite_recipients r2 WHERE r2.invite_id=i.id AND r2.status='accepted') accepted_count
   FROM invites i JOIN shops s ON s.id=i.shop_id JOIN users u ON u.id=i.creator_id`;
-const going = (id) => db.all(`SELECT u.id,u.name,u.photo_url FROM invite_recipients r JOIN users u ON u.id=r.user_id WHERE r.invite_id=? AND r.status='accepted'`, [id]);
+const going = (id) => db.all(`SELECT u.id,u.name,u.photo_url FROM invite_recipients r JOIN users u ON u.id=r.user_id WHERE r.invite_id=? AND r.status='accepted' AND u.suspended_at IS NULL`, [id]);
 
 app.param('id', (req, res, next, id) => (isId(id) ? next() : bad(res, 'Not found.', 404)));
-const notBlocked = `AND i.creator_id NOT IN (SELECT blocked_id FROM blocks WHERE blocker_id=?) AND i.creator_id NOT IN (SELECT blocker_id FROM blocks WHERE blocked_id=?)`;
+const notBlocked = `AND u.suspended_at IS NULL AND i.creator_id NOT IN (SELECT blocked_id FROM blocks WHERE blocker_id=?) AND i.creator_id NOT IN (SELECT blocker_id FROM blocks WHERE blocked_id=?)`;
 app.get('/api/invites/inbox', auth, async (req, res) => {
   const role = ['learn', 'teach'].includes(req.query.role) ? req.query.role : null;
   const rows = (await db.all(`${INVITE_SELECT} JOIN invite_recipients r ON r.invite_id=i.id
@@ -334,7 +346,7 @@ app.get('/api/invites/:id', auth, async (req, res) => {
   const i = await db.get(`${INVITE_SELECT} WHERE i.id=?`, [req.params.id]);
   const r = await db.get('SELECT status,distance_mi FROM invite_recipients WHERE invite_id=? AND user_id=?', [req.params.id, req.session.userId]);
   if (!i || (i.creator_id !== req.session.userId && !r)) return bad(res, 'Invite not found.', 404);
-  if (i.creator_id !== req.session.userId && (await blockedWith(req.session.userId)).has(i.creator_id)) return bad(res, 'Invite not found.', 404);
+  if (i.creator_id !== req.session.userId && (i.creator_suspended || (await blockedWith(req.session.userId)).has(i.creator_id))) return bad(res, 'Invite not found.', 404);
   const counts = await db.get(`SELECT COUNT(*) total, SUM(CASE WHEN status='declined' THEN 1 ELSE 0 END) declined, SUM(CASE WHEN status='pending' THEN 1 ELSE 0 END) pending FROM invite_recipients WHERE invite_id=?`, [i.id]);
   res.json({ ...i, my_status: r?.status || 'host', distance_mi: r?.distance_mi, going: await going(i.id), counts });
 });
@@ -344,7 +356,7 @@ app.post('/api/invites/:id/rsvp', auth, async (req, res) => {
   const i = await db.get(`${INVITE_SELECT} WHERE i.id=?`, [req.params.id]);
   const r = i && await db.get('SELECT status FROM invite_recipients WHERE invite_id=? AND user_id=?', [i.id, req.session.userId]);
   if (!r) return bad(res, 'Invite not found.', 404);
-  if ((await blockedWith(req.session.userId)).has(i.creator_id)) return bad(res, 'Invite not found.', 404);
+  if (i.creator_suspended || (await blockedWith(req.session.userId)).has(i.creator_id)) return bad(res, 'Invite not found.', 404);
   if (new Date(i.starts_at) < Date.now()) return bad(res, 'This meetup has already happened.');
   if (status === 'accepted' && r.status !== 'accepted' && i.accepted_count >= i.max_attendees) return bad(res, 'Sorry — this meetup is full.', 409);
   const me = await db.get('SELECT name FROM users WHERE id=?', [req.session.userId]);
@@ -384,7 +396,7 @@ const POST_SELECT = `SELECT p.id,p.user_id,p.caption,p.created_at,p.invite_id,p.
 app.get('/api/posts', auth, async (req, res) => {
   const me = req.session.userId, limit = Math.min(Math.max(parseInt(req.query.limit, 10) || 12, 1), 30);
   const before = isId(req.query.before) ? Number(req.query.before) : null;
-  const rows = await db.all(`${POST_SELECT} WHERE p.user_id NOT IN (SELECT blocked_id FROM blocks WHERE blocker_id=?) AND p.user_id NOT IN (SELECT blocker_id FROM blocks WHERE blocked_id=?)
+  const rows = await db.all(`${POST_SELECT} WHERE p.hidden_at IS NULL AND u.suspended_at IS NULL AND p.user_id NOT IN (SELECT blocked_id FROM blocks WHERE blocker_id=?) AND p.user_id NOT IN (SELECT blocker_id FROM blocks WHERE blocked_id=?)
     ${before ? 'AND p.id<?' : ''} ORDER BY p.id DESC LIMIT ?`, [me, me, ...(before ? [before] : []), limit + 1]);
   const more = rows.length > limit; const items = rows.slice(0, limit).map((p) => ({ ...p, mine: p.user_id === me }));
   res.json({ items, next_before: more ? items[items.length - 1].id : null });
@@ -429,6 +441,107 @@ app.post('/api/posts/:id/report', auth, reportLimiter, async (req, res) => {
 const sweepOrphans = () => db.run("DELETE FROM images WHERE kind='post' AND created_at < ? AND id NOT IN (SELECT image_id FROM posts)",
   [new Date(Date.now() - 3600e3).toISOString().replace('T', ' ').slice(0, 19)]).catch((e) => console.error('orphan sweep:', e.message));
 setInterval(sweepOrphans, 3600e3).unref();
+
+// ---------- Moderation ----------
+const logAction = (actor, action, targetType, targetId, reason) =>
+  db.run('INSERT INTO admin_actions(actor,action,target_type,target_id,reason) VALUES (?,?,?,?,?)', [actor, action, targetType, targetId, reason ? String(reason).slice(0, 500) : null]);
+const nowTs = () => new Date().toISOString().replace('T', ' ').slice(0, 19);
+// Shared moderation operations (used by the admin page and the machine API). Return false when the target doesn't exist.
+const mod = {
+  async hidePost(id, reason) { const p = await db.get('SELECT id FROM posts WHERE id=?', [id]); if (!p) return false;
+    await db.run('UPDATE posts SET hidden_at=COALESCE(hidden_at,?), hidden_reason=? WHERE id=?', [nowTs(), reason ? String(reason).slice(0, 500) : null, id]); return true; },
+  async unhidePost(id) { const p = await db.get('SELECT id FROM posts WHERE id=?', [id]); if (!p) return false; await db.run('UPDATE posts SET hidden_at=NULL, hidden_reason=NULL WHERE id=?', [id]); return true; },
+  async deletePost(id) { const p = await db.get('SELECT id,image_id FROM posts WHERE id=?', [id]); if (!p) return false;
+    await db.tx(async () => { await db.run("UPDATE reports SET status='resolved' WHERE post_id=? AND status='open'", [id]); await db.run('DELETE FROM posts WHERE id=?', [id]); await images.deleteImage(p.image_id); }); return true; },
+  async suspendUser(id) { const u = await db.get('SELECT id FROM users WHERE id=?', [id]); if (!u) return false;
+    await db.run('UPDATE users SET suspended_at=COALESCE(suspended_at,?) WHERE id=?', [nowTs(), id]);
+    if (db.isPg) await db.run("DELETE FROM session WHERE (sess::jsonb->>'userId') = ?", [String(id)]).catch(() => {});
+    else await db.run("DELETE FROM sessions WHERE json_extract(data,'$.userId') = ?", [id]).catch(() => {});
+    return true; },
+  async unsuspendUser(id) { const u = await db.get('SELECT id FROM users WHERE id=?', [id]); if (!u) return false; await db.run('UPDATE users SET suspended_at=NULL WHERE id=?', [id]); return true; },
+  async dismissReport(id) { const r = await db.get("SELECT id FROM reports WHERE id=?", [id]); if (!r) return false; await db.run("UPDATE reports SET status='dismissed' WHERE id=?", [id]); return true; },
+};
+const REPORT_SELECT = `SELECT r.id,r.reason,r.status,r.created_at,r.invite_id,r.post_id,r.reporter_id,ru.name AS reporter_name,r.reported_id,tu.name AS target_name,
+  CASE WHEN tu.suspended_at IS NULL THEN 0 ELSE 1 END AS target_suspended,p.caption AS post_caption,p.hidden_at AS post_hidden_at,
+  CASE WHEN p.image_id IS NULL THEN NULL ELSE '/img/'||p.image_id END AS post_image,i.topic_label AS invite_topic
+  FROM reports r LEFT JOIN users ru ON ru.id=r.reporter_id LEFT JOIN users tu ON tu.id=r.reported_id LEFT JOIN posts p ON p.id=r.post_id LEFT JOIN invites i ON i.id=r.invite_id`;
+const ADMIN_POST_SELECT = `SELECT p.id,p.user_id,u.name AS user_name,CASE WHEN u.suspended_at IS NULL THEN 0 ELSE 1 END AS user_suspended,p.caption,'/img/'||p.image_id AS image_url,
+  p.created_at,p.hidden_at,p.hidden_reason,s.name AS shop_name FROM posts p JOIN users u ON u.id=p.user_id LEFT JOIN shops s ON s.id=p.shop_id`;
+
+// Admin page: /admin is only served to admins; everyone else gets a plain 404 (doesn't reveal it exists).
+const adminLimiter = limiter(15, 300, 'Too many admin requests. Slow down a little.');
+app.get('/admin', adminLimiter, async (req, res) => {
+  const u = req.session.userId && await db.get('SELECT email,suspended_at FROM users WHERE id=?', [req.session.userId]);
+  if (!u || u.suspended_at || !isAdminEmail(u.email)) return res.status(404).type('text').set('Cache-Control', 'no-store').send('Not found');
+  res.set('Cache-Control', 'no-store').sendFile(path.join(__dirname, 'public', 'index.html'));
+});
+app.use('/api/admin', adminLimiter, adminAuth);
+app.get('/api/admin/overview', async (req, res) => {
+  const c = async (sql) => Number((await db.get(sql)).n) || 0;
+  res.json({
+    counts: { users: await c('SELECT COUNT(*) n FROM users'), suspended: await c('SELECT COUNT(*) n FROM users WHERE suspended_at IS NOT NULL'),
+      posts: await c('SELECT COUNT(*) n FROM posts'), hidden_posts: await c('SELECT COUNT(*) n FROM posts WHERE hidden_at IS NOT NULL'),
+      open_reports: await c("SELECT COUNT(*) n FROM reports WHERE status='open'"), invites: await c('SELECT COUNT(*) n FROM invites') },
+    reports: await db.all(`${REPORT_SELECT} WHERE r.status='open' ORDER BY r.id DESC LIMIT 100`),
+    posts: await db.all(`${ADMIN_POST_SELECT} ORDER BY p.id DESC LIMIT 50`),
+    suspended: await db.all('SELECT id,name,suspended_at FROM users WHERE suspended_at IS NOT NULL ORDER BY suspended_at DESC LIMIT 100'),
+    actions: await db.all('SELECT id,actor,action,target_type,target_id,reason,created_at FROM admin_actions ORDER BY id DESC LIMIT 30'),
+  });
+});
+const adminOp = (action, targetType, fn) => async (req, res) => {
+  const id = Number(req.params.id);
+  if (targetType === 'user' && id === req.session.userId) return bad(res, "You can't do that to your own account.");
+  if (!(await fn(id))) return bad(res, 'Not found.', 404);
+  await logAction(req.userEmail, action, targetType, id, req.body?.reason);
+  res.json({ ok: true });
+};
+app.post('/api/admin/reports/:id/dismiss', adminOp('dismiss_report', 'report', (id) => mod.dismissReport(id)));
+app.post('/api/admin/posts/:id/hide', adminOp('hide_post', 'post', (id) => mod.hidePost(id, 'Hidden by admin')));
+app.post('/api/admin/posts/:id/unhide', adminOp('unhide_post', 'post', (id) => mod.unhidePost(id)));
+app.delete('/api/admin/posts/:id', adminOp('delete_post', 'post', (id) => mod.deletePost(id)));
+app.post('/api/admin/users/:id/suspend', adminOp('suspend_user', 'user', (id) => mod.suspendUser(id)));
+app.post('/api/admin/users/:id/unsuspend', adminOp('unsuspend_user', 'user', (id) => mod.unsuspendUser(id)));
+app.delete('/api/admin/users/:id', adminOp('delete_user', 'user', async (id) => {
+  const u = await db.get('SELECT id,email FROM users WHERE id=?', [id]); if (!u || isAdminEmail(u.email)) return false;
+  await deleteUserCascade(id); return true;
+}));
+
+// Machine moderation API (monitoring routine). Bearer STATS_TOKEN, timing-safe compare. No emails are ever returned.
+const modLimiter = limiter(1, 60, 'Too many requests.');
+const modAuth = (req, res, next) => {
+  const expected = process.env.STATS_TOKEN, given = (req.get('authorization') || '').match(/^Bearer\s+(.+)$/i)?.[1];
+  if (!expected) return bad(res, 'Moderation API disabled (STATS_TOKEN not set).', 503);
+  if (!given || !stats.safeEqual(given, expected)) return bad(res, 'Unauthorized', 401);
+  next();
+};
+app.use('/api/mod', modLimiter, modAuth);
+app.get('/api/mod/queue', async (req, res) => {
+  const t = req.query.since ? new Date(String(req.query.since).slice(0, 40)) : new Date(Date.now() - 864e5);
+  if (isNaN(t)) return bad(res, 'since must be an ISO 8601 timestamp.');
+  const since = t.toISOString().replace('T', ' ').slice(0, 19), base = (process.env.PUBLIC_URL || `${req.protocol}://${req.get('host')}`).replace(/\/$/, '');
+  const abs = (u) => (u ? base + u : null);
+  const reports = (await db.all(`${REPORT_SELECT} WHERE r.status='open' AND r.created_at>=? ORDER BY r.id`, [since])).map((r) => ({
+    id: r.id, created_at: r.created_at, reason: r.reason, reporter: { id: r.reporter_id, name: r.reporter_name },
+    target_user: { id: r.reported_id, name: r.target_name, suspended: !!r.target_suspended },
+    post: r.post_id ? { id: r.post_id, caption: r.post_caption, image_url: abs(r.post_image), hidden: !!r.post_hidden_at } : null, invite_id: r.invite_id }));
+  const posts = (await db.all(`${ADMIN_POST_SELECT} WHERE p.created_at>=? ORDER BY p.id`, [since])).map((p) => ({
+    id: p.id, created_at: p.created_at, caption: p.caption, image_url: abs(p.image_url), hidden: !!p.hidden_at, user: { id: p.user_id, name: p.user_name, suspended: !!p.user_suspended } }));
+  const photos = (await db.all(`SELECT im.id AS image_id,im.created_at,u.id AS user_id,u.name FROM images im JOIN users u ON u.id=im.owner_id AND u.photo_url='/img/'||im.id
+    WHERE im.kind='avatar' AND im.created_at>=? ORDER BY im.created_at`, [since])).map((x) => ({ type: 'avatar', image_url: abs('/img/' + x.image_id), created_at: x.created_at, user: { id: x.user_id, name: x.name } }));
+  res.json({ generated_at: new Date().toISOString(), since: t.toISOString(),
+    open_reports_total: Number((await db.get("SELECT COUNT(*) n FROM reports WHERE status='open'")).n), reports, posts, photos });
+});
+app.post('/api/mod/action', async (req, res) => {
+  const { type, id, reason } = req.body || {};
+  const ops = { hide_post: ['post', (x) => mod.hidePost(x, reason || 'Hidden by monitor')], suspend_user: ['user', (x) => mod.suspendUser(x)], dismiss_report: ['report', (x) => mod.dismissReport(x)] };
+  if (!ops[type]) return bad(res, 'type must be hide_post, suspend_user or dismiss_report.');
+  if (!isId(id)) return bad(res, 'id must be a positive integer.');
+  const [targetType, fn] = ops[type];
+  if (type === 'suspend_user') { const u = await db.get('SELECT email FROM users WHERE id=?', [Number(id)]); if (u && isAdminEmail(u.email)) return bad(res, 'Admins cannot be suspended via the API.', 403); }
+  if (!(await fn(Number(id)))) return bad(res, 'Not found.', 404);
+  await logAction('bubba-monitor', type, targetType, Number(id), reason);
+  res.json({ ok: true, type, id: Number(id) });
+});
 
 // ---------- Safety: block & report ----------
 app.post('/api/users/:id/block', auth, async (req, res) => {
@@ -477,6 +590,10 @@ app.use((err, req, res, next) => {
   if (PROD) await removeDemoAccounts();
   else if (await seed()) console.log('Seeded local demo data (dev only).');
   await coarsenHomeLocations();
+  if (ADMIN_EMAILS.size) {
+    const n = Number((await db.get(`SELECT COUNT(*) n FROM users WHERE lower(email) IN (${[...ADMIN_EMAILS].map(() => '?').join(',')})`, [...ADMIN_EMAILS])).n);
+    console.log(`Admin accounts present: ${n} of ${ADMIN_EMAILS.size} configured.`);
+  } else console.log('Admin accounts present: 0 (ADMIN_EMAILS not set).');
   sweepOrphans();
   app.listen(PORT, HOST, () => console.log(`CoffeeBuds running on http://${HOST}:${PORT} (NODE_ENV=${process.env.NODE_ENV || 'development'})`));
 })().catch((e) => { console.error('Startup failed:', e); process.exit(1); });
