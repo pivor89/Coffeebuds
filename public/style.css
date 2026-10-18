@@ -334,3 +334,13 @@ html[data-theme=paris] body.page-admin{--img:var(--t-admin);--blur:var(--t-admin
 .post.is-hidden img{opacity:.35;filter:grayscale(1)}
 .actions-log{list-style:none;padding:0;margin:8px 0 0}.actions-log li{padding:6px 0;border-bottom:1px solid var(--cream2)}
 @media (max-width:760px){.stats-grid{grid-template-columns:repeat(3,1fr)}.report{grid-template-columns:72px 1fr}.report .thumb{width:72px;height:72px}}
+
+/* ---------- Install app control ---------- */
+.install-card{display:flex;align-items:center;justify-content:space-between;gap:12px;margin-top:18px;padding:14px 16px;border-radius:16px;background:linear-gradient(180deg,#FFFDF8,#F7EEDF);border:1px solid rgba(198,149,99,.35)}
+.install-card b{font-family:"Playfair Display",Georgia,serif;font-weight:600}
+.install-btn{white-space:nowrap}
+.install-link{background:none;border:0;padding:0;font:inherit;color:var(--car2);cursor:pointer;text-decoration:underline;text-underline-offset:3px}
+.install-link:hover{color:var(--espresso)}
+.install-done{color:#4C7A4C;font-weight:600;white-space:nowrap}
+.install-hint.sheet{flex-wrap:nowrap}
+.install-hint b{color:var(--espresso)}

@@ -31,6 +31,20 @@ async function shrinkImage(file, max) {
   if (!blob) throw new Error("Couldn't process that photo.");
   return blob;
 }
+// Permanent "Install app" control (uses window.cbInstall from pwa.js). variant: 'button' (profile) or 'link' (landing).
+function installControl(variant) {
+  const cls = variant === 'link' ? 'install-link' : 'btn ghost sm install-btn';
+  return `<span class="install-slot" data-variant="${variant}"><button type="button" class="${cls}" data-install>📲 Install app</button></span>`;
+}
+function bindInstall(root = document) {
+  const ci = window.cbInstall;
+  root.querySelectorAll('.install-slot').forEach((slot) => {
+    if (ci && ci.state() === 'installed') { slot.innerHTML = '<span class="install-done small">✓ App installed</span>'; return; }
+    const b = slot.querySelector('[data-install]'); if (!b) return;
+    b.onclick = async () => { if (!window.cbInstall) return toast('Installing is not supported in this browser.'); const r = await window.cbInstall.install(); if (r === 'accepted') toast('Installing CoffeeBuds ☕'); bindInstall(); };
+  });
+}
+window.cbInstall?.onChange(() => bindInstall());
 function toast(msg) { const t = $('#toast'); t.textContent = msg; t.hidden = false; clearTimeout(toast.t); toast.t = setTimeout(() => (t.hidden = true), 2800); }
 const avatar = (u, cls = '') => u.photo_url ? `<img class="avatar ${cls}" src="${esc(u.photo_url)}" alt="" referrerpolicy="no-referrer" data-initial="${esc((u.name || '?')[0].toUpperCase())}">`
   : `<span class="avatar ${cls}">${esc((u.name || '?')[0].toUpperCase())}</span>`;
@@ -88,7 +102,9 @@ function authView(mode) {
         <div class="field"><label for="password">Password</label><input id="password" type="password" autocomplete="${isUp ? 'new-password' : 'current-password'}" minlength="${isUp ? 8 : 1}" maxlength="128" required></div>
         <button class="btn block" type="submit">${isUp ? 'Sign up' : 'Log in'}</button>
         <p class="small muted" style="text-align:center;margin-top:16px">${isUp ? 'Already have an account? <a href="#/login">Log in</a>' : 'New here? <a href="#/signup">Create an account</a>'}</p>
+        <p class="small muted install-row" style="text-align:center;margin-top:6px">${installControl('link')}</p>
       </form></section></div>`;
+    bindInstall(app);
     $('#f').onsubmit = async (e) => {
       e.preventDefault();
       const body = { email: $('#email').value, password: $('#password').value, name: $('#name')?.value };
@@ -279,13 +295,15 @@ async function profile() {
        <div id="geoRes" class="small" style="margin-top:6px"></div></div>
      <div class="grid two"><div class="field"><label>Latitude</label><input id="lat" inputmode="decimal" value="${me.lat ?? ''}"></div><div class="field"><label>Longitude</label><input id="lng" inputmode="decimal" value="${me.lng ?? ''}"></div></div>
      <p class="small muted" style="margin-top:-6px">Geocoding uses OpenStreetMap. If it's unavailable, enter coordinates manually. <a href="#" id="gps">Use my device location</a></p>
-     <div class="row between"><button class="btn" type="submit">Save profile</button><button type="button" class="btn ghost sm" data-logout>Sign out</button></div></form>
+     <div class="row between"><button class="btn" type="submit">Save profile</button><button type="button" class="btn ghost sm" data-logout>Sign out</button></div>
+     <div class="install-card"><div><b>CoffeeBuds on your phone</b><div class="small muted">Add it to your home screen for one-tap coffee plans.</div></div>${installControl('button')}</div></form>
    <div class="card"><h3>Your topics</h3><p class="small muted">Free text is fine — we match case-insensitively.</p>
      <form id="tf" class="row" style="flex-wrap:nowrap;margin:12px 0"><input id="tnew" placeholder="e.g. Sourdough baking" maxlength="60">
        <select id="trole" style="width:auto"><option value="learn">Want to learn</option><option value="teach">Can teach</option></select><button class="btn sm">Add</button></form>
      <div id="tlist"></div><button class="btn caramel block" id="tsave" style="margin-top:16px">Save topics</button></div>
    <div class="card"><h3>Blocked people</h3><div id="blist" class="small muted">Loading…</div>
      <p class="small muted" style="margin-top:10px">Your exact home coordinates are never shown to others; we only use them (rounded to about 1 km) to match nearby invites.</p></div></div>`;
+  bindInstall(app);
   $('#photoPick').onclick = (e) => { e.preventDefault(); $('#photoFile').click(); };
   $('#photoFile').onchange = async () => {
     const f = $('#photoFile').files[0]; if (!f) return; $('#photoMsg').textContent = 'Uploading…';
