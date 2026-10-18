@@ -19,7 +19,7 @@ const SHOPS = [
   ['Jet City Espresso', '3404 N Florida Ave, Tampa, FL', 27.9744, -82.4597],
 ];
 
-// Only seeds an empty database, so real data is never overwritten or duplicated on restart.
+// Dev/test only (never runs when NODE_ENV=production). Only seeds an empty database, so real data is never overwritten or duplicated on restart.
 async function seed() {
   if ((await db.get('SELECT COUNT(*) c FROM users')).c > 0) return false;
   const hash = bcrypt.hashSync('coffee123', 10);
@@ -33,4 +33,25 @@ async function seed() {
   });
   return true;
 }
-module.exports = { seed };
+// Production clean-up: delete the seeded demo account(s) on @coffeebuds.app. Only rows whose email is in the seed list,
+// ends in @coffeebuds.app AND still has the public seed password are removed, so real accounts are never touched.
+async function removeDemoAccounts() {
+  const emails = USERS.map((u) => u[0]).filter((e) => e.endsWith('@coffeebuds.app'));
+  let n = 0;
+  for (const email of emails) {
+    const u = await db.get('SELECT id,password_hash FROM users WHERE email=?', [email]);
+    if (!u || !(await bcrypt.compare('coffee123', u.password_hash))) continue;
+    await db.tx(async () => {
+      await db.run('DELETE FROM invite_recipients WHERE user_id=? OR invite_id IN (SELECT id FROM invites WHERE creator_id=?)', [u.id, u.id]);
+      await db.run('DELETE FROM notifications WHERE user_id=? OR invite_id IN (SELECT id FROM invites WHERE creator_id=?)', [u.id, u.id]);
+      await db.run('DELETE FROM invites WHERE creator_id=?', [u.id]);
+      await db.run('DELETE FROM topics WHERE user_id=?', [u.id]);
+      await db.run('DELETE FROM blocks WHERE blocker_id=? OR blocked_id=?', [u.id, u.id]);
+      await db.run('DELETE FROM users WHERE id=?', [u.id]);
+    });
+    n++;
+  }
+  if (n) console.log(`Removed ${n} seeded demo account(s).`);
+  return n;
+}
+module.exports = { seed, removeDemoAccounts, USERS };

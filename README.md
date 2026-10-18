@@ -14,7 +14,7 @@ npm run e2e          # end-to-end HTTP checks against a running server
 npm run screenshots  # Playwright screenshots → screenshots/ (needs: npx playwright install chromium)
 ```
 On first start the app seeds 8 users around Tampa, FL, plus 4 coffee shops.
-**Demo login:** `demo@coffeebuds.app` / `coffee123`. Every seed user has the password `coffee123` (maya@, jordan@, priya@, sam@, lena@, diego@, grace@example.com).
+**Local dev seed data:** when `NODE_ENV` is not `production`, an empty DB is seeded with test users (`demo@coffeebuds.app`, maya@/jordan@/… @example.com, password `coffee123`). Production never seeds, and on startup deletes the seeded `demo@coffeebuds.app` account if it still has the seed password.
 To reset, delete `data/coffeebuds.sqlite` (SQLite mode) or drop the tables (Postgres mode). Seeding runs only when the `users` table is empty, so restarts never duplicate or overwrite real data.
 
 ## Matching rule
@@ -87,4 +87,4 @@ Free-license photos from [Pexels](https://www.pexels.com/license/) (Pexels Licen
 
 `render.yaml` is included (Blueprint). Manual settings: Runtime **Node**, Build `npm install`, Start `npm start`, Plan **Free**, env `NODE_ENV=production`, `SESSION_SECRET=<random>` (optionally `NODE_VERSION=20`). The app listens on `process.env.PORT` and binds `0.0.0.0`.
 
-**Data is ephemeral:** Render free has no persistent disk. The SQLite file (`DB_PATH`, default `data/coffeebuds.sqlite`) is wiped on every redeploy, restart and spin-down (after ~15 min idle). On each fresh start the app auto-seeds demo data, so it always works — login `demo@coffeebuds.app` / `coffee123` — but user-created accounts/posts will not survive. Sessions also reset.
+**Data is ephemeral:** Render free has no persistent disk. The SQLite file (`DB_PATH`, default `data/coffeebuds.sqlite`) is wiped on every redeploy, restart and spin-down (after ~15 min idle). Production does not seed demo data; use DATABASE_URL (Postgres) for persistence. Sessions also reset.

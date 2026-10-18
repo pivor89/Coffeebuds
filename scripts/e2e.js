@@ -4,7 +4,7 @@ const assert = require('node:assert');
 function client() {
   let cookie = '';
   return async (path, method = 'GET', body) => {
-    const r = await fetch(BASE + '/api' + path, { method, headers: { 'Content-Type': 'application/json', cookie }, body: body && JSON.stringify(body) });
+    const r = await fetch(BASE + '/api' + path, { method, headers: { 'Content-Type': 'application/json', 'X-Requested-With': 'CoffeeBuds', cookie }, body: body && JSON.stringify(body) });
     const sc = r.headers.get('set-cookie'); if (sc) cookie = sc.split(';')[0];
     return { status: r.status, data: await r.json().catch(() => null) };
   };
@@ -50,5 +50,37 @@ const inTwoDays = new Date(Date.now() + 2 * 864e5).toISOString();
 
   r = await demo('/invites', 'POST', { role: 'learn', topic: 'Spanish conversation', starts_at: inTwoDays, shop: { name: 'Manual Test Café', address: 'Tampa', lat: 27.95, lng: -82.46 } });
   assert.equal(r.status, 201); ok('manual coffee shop entry works');
+
+  // ---------- Security protections ----------
+  const raw = (path, opts = {}) => fetch(BASE + '/api' + path, opts);
+  let x = await raw('/login', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ email: 'demo@coffeebuds.app', password: 'coffee123' }) });
+  assert.equal(x.status, 403); ok('CSRF: POST without X-Requested-With header rejected');
+  x = await raw('/login', { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-Requested-With': 'CoffeeBuds', Origin: 'https://evil.example' }, body: '{}' });
+  assert.equal(x.status, 403); ok('CSRF: cross-origin Origin rejected');
+  x = await raw('/me'); const h = x.headers;
+  assert.ok(h.get('content-security-policy')?.includes("frame-ancestors 'none'")); assert.equal(h.get('x-content-type-options'), 'nosniff'); assert.ok(!h.get('x-powered-by')); ok('security headers present (CSP, nosniff, no x-powered-by)');
+  r = await taylor('/me'); assert.ok(!('password_hash' in r.data)); assert.equal(r.data.lat, 27.95); ok('home location stored coarsely (~1 km) and no hash in /me');
+  r = await demo('/invites/' + inviteId); assert.ok(!JSON.stringify(r.data).match(/password|@example\.com|"email"/)); ok('invite payload leaks no emails/hashes');
+  r = await taylor('/profile', 'PUT', { name: 'x', photo_url: 'javascript:alert(1)' }); assert.equal(r.status, 400); ok('rejects non-https photo URL');
+  r = await taylor('/profile', 'PUT', { name: 'y'.repeat(81) }); assert.equal(r.status, 400); ok('name length limit');
+  r = await taylor("/invites/1%20OR%201=1"); assert.equal(r.status, 404); ok('non-numeric ids rejected');
+  r = await taylor('/signup', 'POST', { email: `short${stamp}@example.com`, password: 'short', name: 'S' }); assert.equal(r.status, 400); ok('password min length 8');
+  const t2 = client(); r = await t2('/login', 'POST', { email: 'nobody@example.com', password: 'whatever1' }); const r2 = await t2('/login', 'POST', { email: `taylor${stamp}@example.com`, password: 'wrongpass' });
+  assert.equal(r.data.error, r2.data.error); ok('login error identical for unknown email vs wrong password');
+  r = await demo('/invites/' + inviteId + '/rsvp', 'POST', { status: 'declined' }); // demo (recipient) is fine
+  r = await maya('/invites/' + inviteId); assert.equal(r.status, 404); ok('non-recipient cannot view invite');
+  // block / report
+  const taylorId = (await taylor('/me')).data.id, jordanId = (await jordan('/me')).data.id;
+  r = await jordan(`/users/${taylorId}/report`, 'POST', { reason: 'Made me uncomfortable', invite_id: inviteId }); assert.equal(r.status, 201); ok('report user');
+  r = await jordan(`/users/${taylorId}/report`, 'POST', { reason: '' }); assert.equal(r.status, 400); ok('report requires a reason');
+  r = await jordan(`/users/${taylorId}/block`, 'POST'); assert.equal(r.status, 200);
+  assert.ok(!(await has(jordan))); r = await jordan('/invites/' + inviteId); assert.equal(r.status, 404); ok('blocked host\'s invite hidden from blocker');
+  r = await jordan('/blocks'); assert.deepEqual(r.data.map((b) => b.id), [taylorId]); ok('block list');
+  r = await taylor('/invites', 'POST', { role: 'teach', topic: 'AI', shop: { id: 2 }, starts_at: inTwoDays }); assert.equal(r.status, 201);
+  assert.ok(!(await jordan('/invites/inbox')).data.some((i) => i.id === r.data.id)); ok('blocked user cannot invite the blocker');
+  r = await jordan('/invites', 'POST', { role: 'learn', topic: 'AI', shop: { id: 2 }, starts_at: inTwoDays }); const jid = r.data.id;
+  assert.ok(!(await taylor('/invites/inbox')).data.some((i) => i.id === jid)); ok('blocker\'s invites do not reach the blocked user either');
+  r = await jordan(`/users/${taylorId}/block`, 'DELETE'); assert.equal((await jordan('/blocks')).data.length, 0); ok('unblock');
+  r = await jordan(`/users/${jordanId}/block`, 'POST'); assert.equal(r.status, 400); ok('cannot block yourself');
   console.log('\nAll E2E checks passed.');
 })().catch((e) => { console.error('E2E FAILED:', e); process.exit(1); });

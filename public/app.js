@@ -4,14 +4,21 @@ let me = null;
 
 const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 async function api(path, opts = {}) {
-  const r = await fetch('/api' + path, { method: opts.method || 'GET', headers: { 'Content-Type': 'application/json' }, body: opts.body ? JSON.stringify(opts.body) : undefined });
+  const r = await fetch('/api' + path, { method: opts.method || 'GET', headers: { 'Content-Type': 'application/json', 'X-Requested-With': 'CoffeeBuds' }, body: opts.body ? JSON.stringify(opts.body) : undefined });
   const data = await r.json().catch(() => ({}));
   if (!r.ok) { const e = new Error(data.error || 'Something went wrong.'); e.status = r.status; throw e; }
   return data;
 }
 function toast(msg) { const t = $('#toast'); t.textContent = msg; t.hidden = false; clearTimeout(toast.t); toast.t = setTimeout(() => (t.hidden = true), 2800); }
-const avatar = (u, cls = '') => u.photo_url ? `<img class="avatar ${cls}" src="${esc(u.photo_url)}" alt="" onerror="this.replaceWith(Object.assign(document.createElement('span'),{className:'avatar ${cls}',textContent:'${esc((u.name || '?')[0])}'}))">`
+const avatar = (u, cls = '') => u.photo_url ? `<img class="avatar ${cls}" src="${esc(u.photo_url)}" alt="" referrerpolicy="no-referrer" data-initial="${esc((u.name || '?')[0].toUpperCase())}">`
   : `<span class="avatar ${cls}">${esc((u.name || '?')[0].toUpperCase())}</span>`;
+// Broken avatar images fall back to the initial (no inline handlers, so the CSP can forbid them).
+document.addEventListener('error', (e) => { const t = e.target; if (t.tagName === 'IMG' && t.classList.contains('avatar') && t.dataset.initial != null) {
+  const sp = document.createElement('span'); sp.className = t.className; sp.textContent = t.dataset.initial; t.replaceWith(sp); } }, true);
+const SAFETY = `<div class="card safety"><h3>☕ Safety tips</h3><ul class="small muted" style="margin:6px 0 0;padding-left:18px">
+  <li>Meet only in public coffee shops — never at someone's home.</li><li>Tell a friend where you're going and when.</li>
+  <li>Keep personal details (address, phone, finances) private until you trust someone.</li><li>Arrange your own transport and leave if you feel uncomfortable.</li>
+  <li>Block or report anyone who makes you feel unsafe — reports are reviewed.</li></ul></div>`;
 const roleBadge = (r) => r === 'learn' ? '<span class="pill learn">📖 Learn</span>' : '<span class="pill teach">🎓 Teach</span>';
 const fmtDate = (iso) => new Date(iso).toLocaleString([], { weekday: 'short', month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' });
 const empty = (icon, title, text, cta = '') => `<div class="card empty"><div class="icon">${icon}</div><h3>${title}</h3><p class="muted">${text}</p>${cta}</div>`;
@@ -52,14 +59,12 @@ function authView(mode) {
         <h2>${isUp ? 'Create your account' : 'Welcome back'}</h2>
         <p class="muted small" style="margin-top:-4px">${isUp ? 'Takes 30 seconds.' : 'Log in to see your invites.'}</p>
         <div id="err"></div>
-        ${isUp ? '<div class="field"><label for="name">Name</label><input id="name" autocomplete="name" required></div>' : ''}
-        <div class="field"><label for="email">Email</label><input id="email" type="email" autocomplete="email" required></div>
-        <div class="field"><label for="password">Password</label><input id="password" type="password" autocomplete="${isUp ? 'new-password' : 'current-password'}" minlength="6" required></div>
+        ${isUp ? '<div class="field"><label for="name">Name</label><input id="name" autocomplete="name" maxlength="80" required></div>' : ''}
+        <div class="field"><label for="email">Email</label><input id="email" type="email" autocomplete="email" maxlength="254" required></div>
+        <div class="field"><label for="password">Password</label><input id="password" type="password" autocomplete="${isUp ? 'new-password' : 'current-password'}" minlength="${isUp ? 8 : 1}" maxlength="128" required></div>
         <button class="btn block" type="submit">${isUp ? 'Sign up' : 'Log in'}</button>
         <p class="small muted" style="text-align:center;margin-top:16px">${isUp ? 'Already have an account? <a href="#/login">Log in</a>' : 'New here? <a href="#/signup">Create an account</a>'}</p>
-        ${isUp ? '' : '<div class="demo">Demo login: <b>demo@coffeebuds.app</b> / <b>coffee123</b> <a href="#" id="fill">Fill in</a></div>'}
       </form></section></div>`;
-    $('#fill')?.addEventListener('click', (e) => { e.preventDefault(); $('#email').value = 'demo@coffeebuds.app'; $('#password').value = 'coffee123'; });
     $('#f').onsubmit = async (e) => {
       e.preventDefault();
       const body = { email: $('#email').value, password: $('#password').value, name: $('#name')?.value };
@@ -114,7 +119,19 @@ async function inviteDetail(id) {
   const i = await api('/invites/' + id);
   app.innerHTML = `<a href="#/inbox" class="small">← Back</a><div class="stack" style="margin-top:12px">${inviteCard(i)}
     <div class="card"><h3>Where</h3><p class="muted">${esc(i.shop_name)}${i.shop_address ? ' · ' + esc(i.shop_address) : ''}</p><div class="map" id="dmap"></div>
-    ${i.my_status === 'host' ? `<p class="small muted" style="margin-top:12px">Invited ${i.counts.total} · ${i.going.length} going · ${i.counts.declined || 0} declined · ${i.counts.pending || 0} pending</p>` : ''}</div></div>`;
+    ${i.my_status === 'host' ? `<p class="small muted" style="margin-top:12px">Invited ${i.counts.total} · ${i.going.length} going · ${i.counts.declined || 0} declined · ${i.counts.pending || 0} pending</p>` : ''}</div>
+    ${i.creator_id !== me.id ? `<div class="card"><h3>Hosted by ${esc(i.creator_name)}</h3><p class="small muted">Something off? Blocking hides you from each other; reports go to the CoffeeBuds team.</p>
+      <div class="row" style="gap:8px"><button class="btn ghost sm" id="block">Block ${esc(i.creator_name.split(' ')[0])}</button><button class="btn ghost sm" id="report">Report</button></div></div>` : ''}
+    ${SAFETY}</div>`;
+  $('#block')?.addEventListener('click', async () => {
+    if (!confirm(`Block ${i.creator_name}? You won't see each other's invites.`)) return;
+    try { await api(`/users/${i.creator_id}/block`, { method: 'POST' }); toast('Blocked.'); location.hash = '#/inbox'; } catch (e) { toast(e.message); }
+  });
+  $('#report')?.addEventListener('click', async () => {
+    const reason = prompt(`Report ${i.creator_name}: what happened? (required)`); if (reason == null) return;
+    if (!reason.trim()) return toast('Please describe what happened.');
+    try { await api(`/users/${i.creator_id}/report`, { method: 'POST', body: { reason: reason.slice(0, 1000), invite_id: i.id } }); toast('Thanks — your report was sent.'); } catch (e) { toast(e.message); }
+  });
   bindRsvp(app, () => inviteDetail(id));
   if (window.L) { const m = L.map('dmap').setView([i.shop_lat, i.shop_lng], 15); tiles(m); L.marker([i.shop_lat, i.shop_lng]).addTo(m).bindPopup(esc(i.shop_name)); }
 }
@@ -149,7 +166,7 @@ async function newMeetup() {
      <div class="field"><label for="when">Date &amp; time</label><input id="when" type="datetime-local" value="${local}"></div>
      <div class="field"><label for="max">Max attendees</label><input id="max" type="number" min="1" max="50" value="4"></div></div>
      <div class="field"><label for="note">Note (optional)</label><textarea id="note" rows="3" maxlength="500" placeholder="I'll grab a table by the window — beginners welcome!"></textarea></div>
-     <button class="btn caramel" type="submit">Send invites</button></div></form>`;
+     <button class="btn caramel" type="submit">Send invites</button></div>${SAFETY}</form>`;
   const hint = () => ($('#hint').textContent = role === 'learn' ? 'Invites go to nearby people who can teach this topic.' : 'Invites go to nearby people who want to learn this topic.');
   hint();
   $('#roleSeg').querySelectorAll('button').forEach((b) => (b.onclick = () => { role = b.dataset.v; $('#roleSeg').querySelectorAll('button').forEach((x) => x.classList.toggle('on', x === b)); hint(); }));
@@ -230,9 +247,9 @@ async function profile() {
   <div class="grid two" style="margin-top:16px;align-items:start">
    <form class="card" id="pf" novalidate><div id="perr"></div>
      <div class="row" style="margin-bottom:16px">${avatar(me, 'lg')}<div><h3 style="margin:0">${esc(me.name)}</h3><div class="small muted">${esc(me.email)}</div></div></div>
-     <div class="field"><label>Name</label><input id="name" value="${esc(me.name)}"></div>
-     <div class="field"><label>Photo URL (optional)</label><input id="photo" value="${esc(me.photo_url || '')}" placeholder="https://…"></div>
-     <div class="field"><label>Home location</label><div class="row" style="flex-wrap:nowrap"><input id="loc" value="${esc(me.location_label || '')}" placeholder="Address, neighborhood or city"><button type="button" class="btn ghost sm" id="geo">Find</button></div>
+     <div class="field"><label>Name</label><input id="name" maxlength="80" value="${esc(me.name)}"></div>
+     <div class="field"><label>Photo URL (optional)</label><input id="photo" maxlength="500" value="${esc(me.photo_url || '')}" placeholder="https://…"></div>
+     <div class="field"><label>Home location</label><div class="row" style="flex-wrap:nowrap"><input id="loc" maxlength="200" value="${esc(me.location_label || '')}" placeholder="Address, neighborhood or city"><button type="button" class="btn ghost sm" id="geo">Find</button></div>
        <div id="geoRes" class="small" style="margin-top:6px"></div></div>
      <div class="grid two"><div class="field"><label>Latitude</label><input id="lat" inputmode="decimal" value="${me.lat ?? ''}"></div><div class="field"><label>Longitude</label><input id="lng" inputmode="decimal" value="${me.lng ?? ''}"></div></div>
      <p class="small muted" style="margin-top:-6px">Geocoding uses OpenStreetMap. If it's unavailable, enter coordinates manually. <a href="#" id="gps">Use my device location</a></p>
@@ -240,7 +257,13 @@ async function profile() {
    <div class="card"><h3>Your topics</h3><p class="small muted">Free text is fine — we match case-insensitively.</p>
      <form id="tf" class="row" style="flex-wrap:nowrap;margin:12px 0"><input id="tnew" placeholder="e.g. Sourdough baking" maxlength="60">
        <select id="trole" style="width:auto"><option value="learn">Want to learn</option><option value="teach">Can teach</option></select><button class="btn sm">Add</button></form>
-     <div id="tlist"></div><button class="btn caramel block" id="tsave" style="margin-top:16px">Save topics</button></div></div>`;
+     <div id="tlist"></div><button class="btn caramel block" id="tsave" style="margin-top:16px">Save topics</button></div>
+   <div class="card"><h3>Blocked people</h3><div id="blist" class="small muted">Loading…</div>
+     <p class="small muted" style="margin-top:10px">Your exact home coordinates are never shown to others; we only use them (rounded to about 1 km) to match nearby invites.</p></div></div>`;
+  const drawBlocks = async () => { const l = await api('/blocks').catch(() => []); const el = $('#blist'); if (!el) return;
+    el.innerHTML = l.length ? l.map((b) => `<div class="row between" style="margin:6px 0"><span>${esc(b.name)}</span><button class="btn ghost sm" data-unblock="${b.id}">Unblock</button></div>`).join('') : 'Nobody — block someone from an invite page.';
+    el.querySelectorAll('[data-unblock]').forEach((x) => (x.onclick = async () => { await api(`/users/${x.dataset.unblock}/block`, { method: 'DELETE' }).catch((e) => toast(e.message)); drawBlocks(); })); };
+  drawBlocks();
   const drawTopics = () => {
     const sec = (r, title) => { const l = topics.filter((t) => t.role === r);
       return `<p class="small" style="font-weight:600;margin:12px 0 6px">${title}</p><div class="chips">${l.length ? l.map((t) => `<span class="chip ${r}">${esc(t.label)}<button type="button" data-del="${topics.indexOf(t)}" aria-label="Remove">×</button></span>`).join('') : '<span class="small muted">None yet</span>'}</div>`; };

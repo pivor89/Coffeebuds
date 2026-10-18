@@ -24,6 +24,9 @@ CREATE TABLE IF NOT EXISTS invite_recipients (invite_id INTEGER NOT NULL, user_i
   status TEXT NOT NULL DEFAULT 'pending', responded_at TEXT, PRIMARY KEY(invite_id, user_id));
 CREATE TABLE IF NOT EXISTS notifications (id INTEGER PRIMARY KEY, user_id INTEGER NOT NULL, type TEXT NOT NULL, message TEXT NOT NULL,
   invite_id INTEGER, is_read INTEGER NOT NULL DEFAULT 0, created_at TEXT DEFAULT CURRENT_TIMESTAMP);
+CREATE TABLE IF NOT EXISTS blocks (blocker_id INTEGER NOT NULL, blocked_id INTEGER NOT NULL, created_at TEXT DEFAULT CURRENT_TIMESTAMP, PRIMARY KEY(blocker_id, blocked_id));
+CREATE TABLE IF NOT EXISTS reports (id INTEGER PRIMARY KEY, reporter_id INTEGER NOT NULL, reported_id INTEGER NOT NULL, invite_id INTEGER, reason TEXT NOT NULL,
+  status TEXT NOT NULL DEFAULT 'open', created_at TEXT DEFAULT CURRENT_TIMESTAMP);
 `;
 
 // Postgres equivalent. Timestamps stay TEXT in SQLite's 'YYYY-MM-DD HH:MM:SS' (UTC) format so app behavior is identical.
@@ -45,6 +48,10 @@ CREATE INDEX IF NOT EXISTS idx_topics_topic ON topics(topic);
 CREATE INDEX IF NOT EXISTS idx_invites_creator ON invites(creator_id);
 CREATE INDEX IF NOT EXISTS idx_recipients_user ON invite_recipients(user_id);
 CREATE INDEX IF NOT EXISTS idx_notifications_user ON notifications(user_id, is_read);
+CREATE TABLE IF NOT EXISTS blocks (blocker_id INTEGER NOT NULL, blocked_id INTEGER NOT NULL, created_at TEXT DEFAULT ${PG_NOW}, PRIMARY KEY(blocker_id, blocked_id));
+CREATE TABLE IF NOT EXISTS reports (id SERIAL PRIMARY KEY, reporter_id INTEGER NOT NULL, reported_id INTEGER NOT NULL, invite_id INTEGER, reason TEXT NOT NULL,
+  status TEXT NOT NULL DEFAULT 'open', created_at TEXT DEFAULT ${PG_NOW});
+CREATE INDEX IF NOT EXISTS idx_blocks_blocked ON blocks(blocked_id);
 `;
 
 // ---------------- SQLite (sql.js) backend ----------------
@@ -113,7 +120,7 @@ const pg = {
   async run(sql, params) {
     let q = toPg(sql);
     // Mirror sqlite's last_insert_rowid() for tables with a serial id
-    const wantsId = /^\s*INSERT\s+INTO\s+(users|topics|shops|invites|notifications)\b/i.test(q) && !/RETURNING/i.test(q);
+    const wantsId = /^\s*INSERT\s+INTO\s+(users|topics|shops|invites|notifications|reports)\b/i.test(q) && !/RETURNING/i.test(q);
     if (wantsId) q += ' RETURNING id';
     const r = await pg.client().query(q, params);
     return wantsId ? r.rows[0]?.id : undefined;
