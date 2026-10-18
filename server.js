@@ -4,6 +4,7 @@ const bcrypt = require('bcryptjs');
 const path = require('path');
 const db = require('./src/db');
 const { seed } = require('./src/seed');
+const stats = require('./src/stats');
 const { findRecipients, normalizeTopic, haversineMiles, MATCH_RADIUS_MI } = require('./src/matching');
 
 const app = express();
@@ -40,6 +41,7 @@ app.get('/manifest.webmanifest', (req, res) => {
 });
 app.get('/favicon.ico', (req, res) => res.sendFile(path.join(__dirname, 'public', 'icons', 'favicon-32.png')));
 app.use('/api', (req, res, next) => { res.set('Cache-Control', 'no-store'); next(); });
+app.use(stats.middleware);
 app.use(express.static(path.join(__dirname, 'public')));
 
 const bad = (res, msg, code = 400) => res.status(code).json({ error: msg });
@@ -272,11 +274,13 @@ app.post('/api/notifications/read', auth, async (req, res) => {
   await db.run('UPDATE notifications SET is_read=1 WHERE user_id=?', [req.session.userId]); res.json({ ok: true });
 });
 
+app.get('/api/stats', stats.handler);
 app.use('/api', (req, res) => bad(res, 'Not found', 404));
 app.get(/^(?!\/api).*/, (req, res) => res.sendFile(path.join(__dirname, 'public', 'index.html')));
 
 (async () => {
   await db.init();
+  await stats.init();
   console.log(`Database: ${db.isPg ? 'Postgres (DATABASE_URL)' : 'SQLite (sql.js) at ' + (process.env.DB_PATH || 'data/coffeebuds.sqlite')}`);
   sessionMw = session({ ...sessionOpts, store: await require('./src/sessionStore').createStore() });
   if (await seed()) console.log('Seeded demo data. Demo login: demo@coffeebuds.app / coffee123');
