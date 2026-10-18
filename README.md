@@ -59,7 +59,7 @@ Free-license photos from [Pexels](https://www.pexels.com/license/) (Pexels Licen
 **Paris** (`public/images/paris/`)
 | Page | File | Photo |
 |---|---|---|
-| Login / sign up | `login.webp` | two friends laughing over coffee at an outdoor café terrace, by Vitaly Gariev (Pexels): https://www.pexels.com/photo/36765306/ |
+| Login / sign up | `login.webp` | three friends of different backgrounds chatting and laughing over coffee at a bistro table outside a street café, by William Fortunato (Pexels): https://www.pexels.com/photo/6140394/ |
 | Invites inbox | `inbox.webp` | two friends laughing over coffee at a sidewalk café (Pexels): https://www.pexels.com/photo/5047023/ |
 | New meetup | `new.webp` | people chatting at a Paris street café (Pexels): https://www.pexels.com/photo/24415132/ |
 | My meetups | `meetups.webp` | busy Parisian café terrace in summer (Pexels): https://www.pexels.com/photo/28179772/ |
