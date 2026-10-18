@@ -21,7 +21,8 @@ const sessionOpts = {
   // 'auto' = Secure cookie when the request arrived over HTTPS (incl. via a trusted proxy/tunnel), plain on http://localhost
   cookie: { httpOnly: true, sameSite: 'lax', secure: 'auto', maxAge: 1000 * 60 * 60 * 24 * 14 },
 };
-// Theme switcher: any page visited with ?theme=paris|lounge stores the choice in a cookie; ?theme=classic resets to the default
+// Theme switcher (legacy): Paris is now the default for every visitor; the client ignores classic/lounge cookies.
+// The cookie handling below is kept but has no visible effect on the look.
 const THEMES = ['paris', 'lounge'];
 app.use((req, res, next) => {
   const t = typeof req.query.theme === 'string' ? req.query.theme.toLowerCase() : null;

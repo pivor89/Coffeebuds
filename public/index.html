@@ -3,9 +3,9 @@
 <head>
 <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <title>CoffeeBuds — learn together over coffee</title>
-<script>/* theme: ?theme=paris|lounge sets a cookie, ?theme=classic resets; no theme = classic default */(function(){var v=['paris','lounge'],q=(new URLSearchParams(location.search).get('theme')||'').toLowerCase(),m=document.cookie.match(/(?:^|; )theme=([^;]+)/),t=m?decodeURIComponent(m[1]):'';
+<script>/* theme: Paris is the default for everyone; missing or old classic/lounge cookies fall back to paris. Lounge/classic code is kept but unused. */(function(){var v=['paris','lounge'],q=(new URLSearchParams(location.search).get('theme')||'').toLowerCase(),m=document.cookie.match(/(?:^|; )theme=([^;]+)/),t=m?decodeURIComponent(m[1]):'';
 if(v.indexOf(q)>=0){t=q;document.cookie='theme='+q+';path=/;max-age=31536000;samesite=lax';}else if(['classic','default','none'].indexOf(q)>=0){t='';document.cookie='theme=;path=/;max-age=0';}
-if(v.indexOf(t)>=0)document.documentElement.setAttribute('data-theme',t);})();</script>
+if(t!=='paris')t='paris';document.documentElement.setAttribute('data-theme',t);})();</script>
 <link rel="preconnect" href="https://fonts.googleapis.com"><link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:ital,wght@0,500;0,600;0,700;1,500;1,600&family=Playfair+Display:ital,wght@0,500;0,600;0,700;1,500&family=Fraunces:opsz,wght@9..144,500;9..144,700&family=Inter:wght@400;500;600&display=swap" rel="stylesheet">
 <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">

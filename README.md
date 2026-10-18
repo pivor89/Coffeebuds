@@ -47,12 +47,11 @@ Free-license photos from [Unsplash](https://unsplash.com/license) (Unsplash Lice
 | Notifications | `notifications.webp` | small group meeting at a café table: https://unsplash.com/photos/1521737604893-d14cc237f11d |
 
 ## Themes
-Three looks share the same app. Add `?theme=` to any URL to switch; the choice is saved in a `theme` cookie for a year:
-- *(default, no cookie)*: classic warm coffee and caramel. `?theme=classic` switches back to it.
-- `?theme=paris`: **Bright Parisian café**. Airy ivory and cream with soft caramel, italic Playfair Display headings, photos of sunny Paris-style café terraces.
-- `?theme=lounge`: **Luxury lounge**. Deep espresso and burgundy with gold accents, Cormorant Garamond headings, photos of plush, warmly lit lounges.
+**Bright Parisian café** (`paris`) is the default look for every visitor: airy ivory and cream with soft caramel, italic Playfair Display headings, photos of sunny Paris-style café terraces. No cookie is needed. Old `theme` cookies set to `classic` or `lounge` (and any `?theme=` value) are ignored, so everyone sees Paris.
 
-The cookie is set on the server (any request carrying `?theme=`) and by a small inline script in `index.html` that adds `data-theme` to `<html>` before first paint. Theme styles live at the end of `public/style.css`. Run `node scripts/theme-screenshots.js` to take mobile screenshots of both themes (`screenshots/theme-*.png`).
+The classic (warm coffee and caramel) and Luxury lounge (espresso, burgundy and gold) styles remain in the code but are currently unused.
+
+A small inline script in `index.html` always adds `data-theme="paris"` to `<html>` before first paint. Theme styles live at the end of `public/style.css`. Run `node scripts/theme-screenshots.js` to take mobile screenshots of both themes (`screenshots/theme-*.png`).
 
 ### Theme photo credits
 Free-license photos from [Pexels](https://www.pexels.com/license/) (Pexels License) and [Unsplash](https://unsplash.com/license) (Unsplash License), resized to WebP, each with a blurred `-blur.webp` variant for the page background.
