@@ -33,25 +33,39 @@ async function seed() {
   });
   return true;
 }
-// Production clean-up: delete the seeded demo account(s) on @coffeebuds.app. Only rows whose email is in the seed list,
-// ends in @coffeebuds.app AND still has the public seed password are removed, so real accounts are never touched.
+// Production clean-up (approved by Alex): delete every seeded sample account whose email EXACTLY matches the seed list above,
+// with their topics, invites (+ RSVPs/notifications), notifications, blocks, reports and sessions. No other account is touched.
 async function removeDemoAccounts() {
-  const emails = USERS.map((u) => u[0]).filter((e) => e.endsWith('@coffeebuds.app'));
   let n = 0;
-  for (const email of emails) {
-    const u = await db.get('SELECT id,password_hash FROM users WHERE email=?', [email]);
-    if (!u || !(await bcrypt.compare('coffee123', u.password_hash))) continue;
+  for (const email of USERS.map((u) => u[0])) {
+    const u = await db.get('SELECT id FROM users WHERE email=?', [email]);
+    if (!u) continue;
     await db.tx(async () => {
-      await db.run('DELETE FROM invite_recipients WHERE user_id=? OR invite_id IN (SELECT id FROM invites WHERE creator_id=?)', [u.id, u.id]);
-      await db.run('DELETE FROM notifications WHERE user_id=? OR invite_id IN (SELECT id FROM invites WHERE creator_id=?)', [u.id, u.id]);
+      const inv = 'SELECT id FROM invites WHERE creator_id=?';
+      await db.run(`DELETE FROM invite_recipients WHERE user_id=? OR invite_id IN (${inv})`, [u.id, u.id]);
+      await db.run(`DELETE FROM notifications WHERE user_id=? OR invite_id IN (${inv})`, [u.id, u.id]);
+      await db.run(`DELETE FROM reports WHERE reporter_id=? OR reported_id=? OR invite_id IN (${inv})`, [u.id, u.id, u.id]);
       await db.run('DELETE FROM invites WHERE creator_id=?', [u.id]);
       await db.run('DELETE FROM topics WHERE user_id=?', [u.id]);
       await db.run('DELETE FROM blocks WHERE blocker_id=? OR blocked_id=?', [u.id, u.id]);
+      if (db.isPg) await db.run("DELETE FROM session WHERE (sess::jsonb->>'userId') = ?", [String(u.id)]).catch(() => {});
+      else await db.run("DELETE FROM sessions WHERE json_extract(data,'$.userId') = ?", [u.id]).catch(() => {});
       await db.run('DELETE FROM users WHERE id=?', [u.id]);
     });
     n++;
   }
-  if (n) console.log(`Removed ${n} seeded demo account(s).`);
+  console.log(`Seed cleanup: deleted ${n} seeded sample account(s).`);
   return n;
 }
-module.exports = { seed, removeDemoAccounts, USERS };
+// One-off, idempotent: round stored home coordinates to 2 decimals (~1 km).
+async function coarsenHomeLocations() {
+  const sql = db.isPg
+    ? 'UPDATE users SET lat=ROUND(lat::numeric,2)::float8, lng=ROUND(lng::numeric,2)::float8 WHERE lat IS NOT NULL AND (lat<>ROUND(lat::numeric,2)::float8 OR lng<>ROUND(lng::numeric,2)::float8)'
+    : 'UPDATE users SET lat=ROUND(lat,2), lng=ROUND(lng,2) WHERE lat IS NOT NULL AND (lat<>ROUND(lat,2) OR lng<>ROUND(lng,2))';
+  const before = (await db.get(db.isPg ? 'SELECT COUNT(*) c FROM users WHERE lat IS NOT NULL AND (lat<>ROUND(lat::numeric,2)::float8 OR lng<>ROUND(lng::numeric,2)::float8)'
+    : 'SELECT COUNT(*) c FROM users WHERE lat IS NOT NULL AND (lat<>ROUND(lat,2) OR lng<>ROUND(lng,2))')).c;
+  if (before) await db.run(sql);
+  console.log(`Location migration: rounded ${before} home location(s) to ~1 km.`);
+  return before;
+}
+module.exports = { seed, removeDemoAccounts, coarsenHomeLocations, USERS };

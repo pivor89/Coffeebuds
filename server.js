@@ -5,7 +5,7 @@ const path = require('path');
 const helmet = require('helmet');
 const { rateLimit } = require('express-rate-limit');
 const db = require('./src/db');
-const { seed, removeDemoAccounts } = require('./src/seed');
+const { seed, removeDemoAccounts, coarsenHomeLocations } = require('./src/seed');
 const stats = require('./src/stats');
 const { findRecipients, normalizeTopic, haversineMiles, MATCH_RADIUS_MI } = require('./src/matching');
 
@@ -390,5 +390,6 @@ app.use((err, req, res, next) => {
   sessionMw = session({ ...sessionOpts, store: await require('./src/sessionStore').createStore() });
   if (PROD) await removeDemoAccounts();
   else if (await seed()) console.log('Seeded local demo data (dev only).');
+  await coarsenHomeLocations();
   app.listen(PORT, HOST, () => console.log(`CoffeeBuds running on http://${HOST}:${PORT} (NODE_ENV=${process.env.NODE_ENV || 'development'})`));
 })().catch((e) => { console.error('Startup failed:', e); process.exit(1); });

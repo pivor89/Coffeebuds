@@ -86,7 +86,7 @@ function safeEqual(a, b) {
 async function handler(req, res) {
   const expected = process.env.STATS_TOKEN;
   const bearer = (req.get('authorization') || '').match(/^Bearer\s+(.+)$/i)?.[1];
-  const given = bearer || (typeof req.query.token === 'string' ? req.query.token : '');
+  const given = bearer || ''; // Bearer header only: tokens in URLs leak into logs/history
   res.set('Cache-Control', 'no-store');
   if (!expected) return res.status(503).json({ error: 'Stats disabled (STATS_TOKEN not set).' });
   if (!given || !safeEqual(given, expected)) return res.status(401).json({ error: 'Unauthorized' });
