@@ -39,7 +39,7 @@ app.get('/manifest.webmanifest', (req, res) => {
   res.set({ 'Content-Type': 'application/manifest+json; charset=utf-8', 'Cache-Control': 'no-cache' });
   res.sendFile(path.join(__dirname, 'public', 'manifest.webmanifest'));
 });
-app.get('/favicon.ico', (req, res) => res.sendFile(path.join(__dirname, 'public', 'icons', 'favicon-32.png')));
+app.get('/favicon.ico', (req, res) => res.sendFile(path.join(__dirname, 'public', 'favicon.ico')));
 app.use('/api', (req, res, next) => { res.set('Cache-Control', 'no-store'); next(); });
 app.use(stats.middleware);
 app.use(express.static(path.join(__dirname, 'public')));
