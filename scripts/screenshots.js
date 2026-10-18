@@ -1,0 +1,20 @@
+const { chromium } = require('playwright');
+const BASE = process.argv[2] || 'http://localhost:3000', OUT = __dirname + '/../screenshots/';
+(async () => {
+  const b = await chromium.launch();
+  const p = await b.newPage({ viewport: { width: 1280, height: 860 } });
+  await p.goto(BASE + '/#/login'); await p.waitForSelector('#f'); await p.waitForTimeout(800);
+  await p.screenshot({ path: OUT + '01-login.png' });
+  await p.fill('#email', 'demo@coffeebuds.app'); await p.fill('#password', 'coffee123'); await p.click('button[type=submit]');
+  await p.waitForSelector('.invite'); await p.waitForTimeout(800); await p.screenshot({ path: OUT + '02-invites-inbox.png', fullPage: true });
+  await p.goto(BASE + '/#/new'); await p.waitForSelector('.shopitem', { timeout: 20000 }); await p.click('.shopitem'); await p.fill('#topic', 'AI'); await p.waitForTimeout(2000);
+  await p.screenshot({ path: OUT + '03-new-meetup.png', fullPage: true });
+  await p.goto(BASE + '/#/profile'); await p.waitForSelector('#tlist'); await p.waitForTimeout(800); await p.screenshot({ path: OUT + '04-profile.png', fullPage: true });
+  await p.goto(BASE + '/#/notifications'); await p.waitForSelector('.pagehead'); await p.waitForTimeout(800); await p.screenshot({ path: OUT + '06-notifications.png' });
+  await p.goto(BASE + '/#/meetups'); await p.waitForSelector('.pagehead'); await p.waitForTimeout(800); await p.screenshot({ path: OUT + '07-meetups-desktop.png' });
+  const m = await b.newPage({ viewport: { width: 390, height: 844 }, deviceScaleFactor: 2 });
+  await m.goto(BASE + '/#/login'); await m.fill('#email', 'demo@coffeebuds.app'); await m.fill('#password', 'coffee123'); await m.click('button[type=submit]');
+  await m.waitForSelector('.invite'); await m.goto(BASE + '/#/meetups'); await m.waitForSelector('.section-title'); await m.waitForTimeout(800);
+  await m.screenshot({ path: OUT + '05-mobile-meetups.png' });
+  await b.close(); console.log('screenshots saved');
+})();

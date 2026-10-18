@@ -1,0 +1,28 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>CoffeeBuds — learn together over coffee</title>
+<link rel="preconnect" href="https://fonts.googleapis.com"><link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,500;9..144,700&family=Inter:wght@400;500;600&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
+<link rel="stylesheet" href="/style.css">
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>☕</text></svg>">
+</head>
+<body>
+<header class="topbar" id="topbar" hidden>
+  <a href="#/inbox" class="brand">☕ <span>CoffeeBuds</span></a>
+  <nav class="nav">
+    <a href="#/inbox" data-nav="inbox">Invites</a>
+    <a href="#/new" data-nav="new">New meetup</a>
+    <a href="#/meetups" data-nav="meetups">My meetups</a>
+    <a href="#/profile" data-nav="profile">Profile</a>
+    <a href="#/notifications" data-nav="notifications" class="bell" aria-label="Notifications">🔔<span id="badge" class="badge" hidden></span></a>
+  </nav>
+</header>
+<main id="app" class="container"></main>
+<div id="toast" class="toast" hidden></div>
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<script src="/app.js"></script>
+</body>
+</html>
