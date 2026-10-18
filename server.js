@@ -37,49 +37,51 @@ const auth = (req, res, next) => (req.session.userId ? next() : bad(res, 'Please
 const isNum = (v) => v !== '' && v != null && !isNaN(Number(v));
 const validLatLng = (lat, lng) => isNum(lat) && isNum(lng) && Math.abs(lat) <= 90 && Math.abs(lng) <= 180;
 
-function userPayload(id) {
-  const u = db.get('SELECT id,email,name,photo_url,location_label,lat,lng FROM users WHERE id=?', [id]);
+async function userPayload(id) {
+  const u = await db.get('SELECT id,email,name,photo_url,location_label,lat,lng FROM users WHERE id=?', [id]);
   if (!u) return null;
-  u.topics = db.all('SELECT topic,label,role FROM topics WHERE user_id=? ORDER BY role,label', [id]);
-  u.unread = db.get('SELECT COUNT(*) c FROM notifications WHERE user_id=? AND is_read=0', [id]).c;
+  u.topics = await db.all('SELECT topic,label,role FROM topics WHERE user_id=? ORDER BY role,label', [id]);
+  u.unread = (await db.get('SELECT COUNT(*) c FROM notifications WHERE user_id=? AND is_read=0', [id])).c;
   return u;
 }
-function notify(userId, type, message, inviteId) {
-  db.run('INSERT INTO notifications(user_id,type,message,invite_id) VALUES (?,?,?,?)', [userId, type, message, inviteId], false);
+async function notify(userId, type, message, inviteId) {
+  await db.run('INSERT INTO notifications(user_id,type,message,invite_id) VALUES (?,?,?,?)', [userId, type, message, inviteId]);
 }
 
 // ---------- Auth ----------
-app.post('/api/signup', (req, res) => {
+app.post('/api/signup', async (req, res) => {
   const { email, password, name } = req.body || {};
   const e = String(email || '').trim().toLowerCase();
   if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(e)) return bad(res, 'Please enter a valid email.');
   if (!password || String(password).length < 6) return bad(res, 'Password must be at least 6 characters.');
   if (!name || !String(name).trim()) return bad(res, 'Please enter your name.');
-  if (db.get('SELECT id FROM users WHERE email=?', [e])) return bad(res, 'An account with that email already exists.', 409);
-  const id = db.run('INSERT INTO users(email,password_hash,name) VALUES (?,?,?)', [e, bcrypt.hashSync(String(password), 10), String(name).trim().slice(0, 80)]);
-  req.session.regenerate(() => { req.session.userId = id; res.status(201).json(userPayload(id)); });
+  if (await db.get('SELECT id FROM users WHERE email=?', [e])) return bad(res, 'An account with that email already exists.', 409);
+  const id = await db.run('INSERT INTO users(email,password_hash,name) VALUES (?,?,?)', [e, bcrypt.hashSync(String(password), 10), String(name).trim().slice(0, 80)]);
+  const payload = await userPayload(id);
+  req.session.regenerate(() => { req.session.userId = id; res.status(201).json(payload); });
 });
-app.post('/api/login', (req, res) => {
+app.post('/api/login', async (req, res) => {
   const { email, password } = req.body || {};
-  const u = db.get('SELECT id,password_hash FROM users WHERE email=?', [String(email || '').trim().toLowerCase()]);
+  const u = await db.get('SELECT id,password_hash FROM users WHERE email=?', [String(email || '').trim().toLowerCase()]);
   if (!u || !bcrypt.compareSync(String(password || ''), u.password_hash)) return bad(res, 'Incorrect email or password.', 401);
-  req.session.regenerate(() => { req.session.userId = u.id; res.json(userPayload(u.id)); });
+  const payload = await userPayload(u.id);
+  req.session.regenerate(() => { req.session.userId = u.id; res.json(payload); });
 });
 app.post('/api/logout', (req, res) => req.session.destroy(() => res.json({ ok: true })));
-app.get('/api/me', auth, (req, res) => res.json(userPayload(req.session.userId)));
+app.get('/api/me', auth, async (req, res) => res.json(await userPayload(req.session.userId)));
 
 // ---------- Profile ----------
-app.put('/api/profile', auth, (req, res) => {
+app.put('/api/profile', auth, async (req, res) => {
   const { name, photo_url, location_label, lat, lng } = req.body || {};
   if (!name || !String(name).trim()) return bad(res, 'Name is required.');
   if (photo_url && !/^https?:\/\//i.test(photo_url)) return bad(res, 'Photo URL must start with http(s)://');
   const hasLoc = isNum(lat) || isNum(lng);
   if (hasLoc && !validLatLng(lat, lng)) return bad(res, 'Latitude/longitude are invalid.');
-  db.run('UPDATE users SET name=?,photo_url=?,location_label=?,lat=?,lng=? WHERE id=?',
+  await db.run('UPDATE users SET name=?,photo_url=?,location_label=?,lat=?,lng=? WHERE id=?',
     [String(name).trim(), photo_url || null, location_label || null, hasLoc ? Number(lat) : null, hasLoc ? Number(lng) : null, req.session.userId]);
-  res.json(userPayload(req.session.userId));
+  res.json(await userPayload(req.session.userId));
 });
-app.put('/api/topics', auth, (req, res) => {
+app.put('/api/topics', auth, async (req, res) => {
   const list = Array.isArray(req.body?.topics) ? req.body.topics : null;
   if (!list) return bad(res, 'topics must be an array.');
   const clean = [];
@@ -89,14 +91,14 @@ app.put('/api/topics', auth, (req, res) => {
     if (!['learn', 'teach'].includes(t.role)) return bad(res, `Invalid role for "${label}".`);
     if (!clean.some((c) => c.topic === topic && c.role === t.role)) clean.push({ topic, label, role: t.role });
   }
-  db.tx(() => {
-    db.run('DELETE FROM topics WHERE user_id=?', [req.session.userId], false);
-    for (const c of clean) db.run('INSERT INTO topics(user_id,topic,label,role) VALUES (?,?,?,?)', [req.session.userId, c.topic, c.label, c.role], false);
+  await db.tx(async () => {
+    await db.run('DELETE FROM topics WHERE user_id=?', [req.session.userId]);
+    for (const c of clean) await db.run('INSERT INTO topics(user_id,topic,label,role) VALUES (?,?,?,?)', [req.session.userId, c.topic, c.label, c.role]);
   });
-  res.json(userPayload(req.session.userId));
+  res.json(await userPayload(req.session.userId));
 });
-app.get('/api/topics/popular', auth, (req, res) =>
-  res.json(db.all('SELECT topic, MIN(label) label, COUNT(*) n FROM topics GROUP BY topic ORDER BY n DESC LIMIT 20')));
+app.get('/api/topics/popular', auth, async (req, res) =>
+  res.json(await db.all('SELECT topic, MIN(label) label, COUNT(*) n FROM topics GROUP BY topic ORDER BY n DESC LIMIT 20')));
 
 // ---------- Geo (OpenStreetMap, with graceful fallback) ----------
 async function fetchJson(url, opts = {}) {
@@ -131,7 +133,7 @@ app.get('/api/shops/nearby', auth, async (req, res) => {
   const { lat, lng } = req.query;
   if (!validLatLng(lat, lng)) return bad(res, 'Set your location first (lat/lng).');
   const radiusM = Math.min(Number(req.query.radius_m) || 5000, 15000);
-  const local = db.all('SELECT * FROM shops').map((s) => ({ ...s, source: 'saved', distance: haversineMiles(+lat, +lng, s.lat, s.lng) }))
+  const local = (await db.all('SELECT * FROM shops')).map((s) => ({ ...s, source: 'saved', distance: haversineMiles(+lat, +lng, s.lat, s.lng) }))
     .filter((s) => s.distance <= MATCH_RADIUS_MI)
     .filter((s, i, arr) => arr.findIndex((o) => o.name.toLowerCase() === s.name.toLowerCase() && Math.abs(o.lat - s.lat) < 0.002) === i);
   let osm = [], warning = null;
@@ -162,19 +164,19 @@ app.get('/api/shops/nearby', auth, async (req, res) => {
 });
 
 // ---------- Invites ----------
-function resolveShop(body, creator) {
+async function resolveShop(body, creator) {
   const s = body.shop || {};
-  if (s.id) { const row = db.get('SELECT * FROM shops WHERE id=?', [s.id]); if (row) return row; }
-  if (s.osm_id) { const row = db.get('SELECT * FROM shops WHERE osm_id=?', [s.osm_id]); if (row) return row; }
+  if (s.id) { const row = await db.get('SELECT * FROM shops WHERE id=?', [s.id]); if (row) return row; }
+  if (s.osm_id) { const row = await db.get('SELECT * FROM shops WHERE osm_id=?', [s.osm_id]); if (row) return row; }
   const name = String(s.name || '').trim();
   if (!name) throw new Error('Choose a coffee shop or type one in.');
   if (!validLatLng(s.lat, s.lng)) throw new Error('Coffee shop needs a location — search it or use the map.');
-  const dup = db.get('SELECT * FROM shops WHERE lower(name)=lower(?) AND abs(lat-?)<0.002 AND abs(lng-?)<0.002', [name, +s.lat, +s.lng]);
+  const dup = await db.get('SELECT * FROM shops WHERE lower(name)=lower(?) AND abs(lat-?)<0.002 AND abs(lng-?)<0.002', [name, +s.lat, +s.lng]);
   if (dup) return dup;
-  const id = db.run('INSERT INTO shops(name,address,lat,lng,osm_id) VALUES (?,?,?,?,?)', [name.slice(0, 120), s.address || null, +s.lat, +s.lng, s.osm_id || null], false);
+  const id = await db.run('INSERT INTO shops(name,address,lat,lng,osm_id) VALUES (?,?,?,?,?)', [name.slice(0, 120), s.address || null, +s.lat, +s.lng, s.osm_id || null]);
   return db.get('SELECT * FROM shops WHERE id=?', [id]);
 }
-app.post('/api/invites', auth, (req, res) => {
+app.post('/api/invites', auth, async (req, res) => {
   const b = req.body || {}, me = req.session.userId;
   const topicLabel = String(b.topic || '').trim().slice(0, 60), topic = normalizeTopic(topicLabel);
   if (!['learn', 'teach'].includes(b.role)) return bad(res, 'Choose "I want to learn" or "I can teach".');
@@ -185,18 +187,18 @@ app.post('/api/invites', auth, (req, res) => {
   const max = parseInt(b.max_attendees ?? 4, 10);
   if (!(max >= 1 && max <= 50)) return bad(res, 'Max attendees must be between 1 and 50.');
   try {
-    const result = db.tx(() => {
-      const shop = resolveShop(b, me);
-      const id = db.run('INSERT INTO invites(creator_id,shop_id,role,topic,topic_label,starts_at,note,max_attendees) VALUES (?,?,?,?,?,?,?,?)',
-        [me, shop.id, b.role, topic, topicLabel, when.toISOString(), String(b.note || '').slice(0, 500) || null, max], false);
-      const users = db.all('SELECT id,lat,lng FROM users WHERE lat IS NOT NULL');
-      const topics = db.all('SELECT user_id,topic,role FROM topics WHERE topic=?', [topic]);
+    const result = await db.tx(async () => {
+      const shop = await resolveShop(b, me);
+      const id = await db.run('INSERT INTO invites(creator_id,shop_id,role,topic,topic_label,starts_at,note,max_attendees) VALUES (?,?,?,?,?,?,?,?)',
+        [me, shop.id, b.role, topic, topicLabel, when.toISOString(), String(b.note || '').slice(0, 500) || null, max]);
+      const users = await db.all('SELECT id,lat,lng FROM users WHERE lat IS NOT NULL');
+      const topics = await db.all('SELECT user_id,topic,role FROM topics WHERE topic=?', [topic]);
       users.forEach((u) => (u.topics = topics.filter((t) => t.user_id === u.id)));
       const recips = findRecipients(users, shop, { creatorId: me, role: b.role, topic });
-      const creator = db.get('SELECT name FROM users WHERE id=?', [me]);
+      const creator = await db.get('SELECT name FROM users WHERE id=?', [me]);
       for (const r of recips) {
-        db.run('INSERT INTO invite_recipients(invite_id,user_id,distance_mi) VALUES (?,?,?)', [id, r.userId, r.distance], false);
-        notify(r.userId, 'invite', `${creator.name} ${b.role === 'learn' ? 'wants to learn' : 'can teach'} ${topicLabel} at ${shop.name}`, id);
+        await db.run('INSERT INTO invite_recipients(invite_id,user_id,distance_mi) VALUES (?,?,?)', [id, r.userId, r.distance]);
+        await notify(r.userId, 'invite', `${creator.name} ${b.role === 'learn' ? 'wants to learn' : 'can teach'} ${topicLabel} at ${shop.name}`, id);
       }
       return { id, recipients: recips.length };
     });
@@ -204,47 +206,49 @@ app.post('/api/invites', auth, (req, res) => {
   } catch (e) { bad(res, e.message); }
 });
 
+// Same value/format as SQLite's datetime('now','-1 day'), computed in JS so it works on both backends.
+const oneDayAgo = () => new Date(Date.now() - 864e5).toISOString().replace('T', ' ').slice(0, 19);
 const INVITE_SELECT = `SELECT i.*, s.name shop_name, s.address shop_address, s.lat shop_lat, s.lng shop_lng,
   u.name creator_name, u.photo_url creator_photo,
   (SELECT COUNT(*) FROM invite_recipients r2 WHERE r2.invite_id=i.id AND r2.status='accepted') accepted_count
   FROM invites i JOIN shops s ON s.id=i.shop_id JOIN users u ON u.id=i.creator_id`;
 const going = (id) => db.all(`SELECT u.id,u.name,u.photo_url FROM invite_recipients r JOIN users u ON u.id=r.user_id WHERE r.invite_id=? AND r.status='accepted'`, [id]);
 
-app.get('/api/invites/inbox', auth, (req, res) => {
+app.get('/api/invites/inbox', auth, async (req, res) => {
   const role = ['learn', 'teach'].includes(req.query.role) ? req.query.role : null;
-  const rows = db.all(`${INVITE_SELECT} JOIN invite_recipients r ON r.invite_id=i.id
-    WHERE r.user_id=? ${role ? 'AND i.role=?' : ''} AND i.starts_at >= datetime('now','-1 day') ORDER BY i.starts_at`,
-    role ? [req.session.userId, role] : [req.session.userId]).map((i) => i);
-  const mine = db.all('SELECT invite_id,status,distance_mi FROM invite_recipients WHERE user_id=?', [req.session.userId]);
-  res.json(rows.map((i) => { const m = mine.find((x) => x.invite_id === i.id); return { ...i, my_status: m.status, distance_mi: m.distance_mi, going: going(i.id) }; }));
+  const rows = (await db.all(`${INVITE_SELECT} JOIN invite_recipients r ON r.invite_id=i.id
+    WHERE r.user_id=? ${role ? 'AND i.role=?' : ''} AND i.starts_at >= ? ORDER BY i.starts_at`,
+    role ? [req.session.userId, role, oneDayAgo()] : [req.session.userId, oneDayAgo()])).map((i) => i);
+  const mine = await db.all('SELECT invite_id,status,distance_mi FROM invite_recipients WHERE user_id=?', [req.session.userId]);
+  res.json(await Promise.all(rows.map(async (i) => { const m = mine.find((x) => x.invite_id === i.id); return { ...i, my_status: m.status, distance_mi: m.distance_mi, going: await going(i.id) }; })));
 });
-app.get('/api/invites/:id', auth, (req, res) => {
-  const i = db.get(`${INVITE_SELECT} WHERE i.id=?`, [req.params.id]);
-  const r = db.get('SELECT status,distance_mi FROM invite_recipients WHERE invite_id=? AND user_id=?', [req.params.id, req.session.userId]);
+app.get('/api/invites/:id', auth, async (req, res) => {
+  const i = await db.get(`${INVITE_SELECT} WHERE i.id=?`, [req.params.id]);
+  const r = await db.get('SELECT status,distance_mi FROM invite_recipients WHERE invite_id=? AND user_id=?', [req.params.id, req.session.userId]);
   if (!i || (i.creator_id !== req.session.userId && !r)) return bad(res, 'Invite not found.', 404);
-  const counts = db.get(`SELECT COUNT(*) total, SUM(status='declined') declined, SUM(status='pending') pending FROM invite_recipients WHERE invite_id=?`, [i.id]);
-  res.json({ ...i, my_status: r?.status || 'host', distance_mi: r?.distance_mi, going: going(i.id), counts });
+  const counts = await db.get(`SELECT COUNT(*) total, SUM(CASE WHEN status='declined' THEN 1 ELSE 0 END) declined, SUM(CASE WHEN status='pending' THEN 1 ELSE 0 END) pending FROM invite_recipients WHERE invite_id=?`, [i.id]);
+  res.json({ ...i, my_status: r?.status || 'host', distance_mi: r?.distance_mi, going: await going(i.id), counts });
 });
-app.post('/api/invites/:id/rsvp', auth, (req, res) => {
+app.post('/api/invites/:id/rsvp', auth, async (req, res) => {
   const status = req.body?.status;
   if (!['accepted', 'declined'].includes(status)) return bad(res, 'Status must be accepted or declined.');
-  const i = db.get(`${INVITE_SELECT} WHERE i.id=?`, [req.params.id]);
-  const r = i && db.get('SELECT status FROM invite_recipients WHERE invite_id=? AND user_id=?', [i.id, req.session.userId]);
+  const i = await db.get(`${INVITE_SELECT} WHERE i.id=?`, [req.params.id]);
+  const r = i && await db.get('SELECT status FROM invite_recipients WHERE invite_id=? AND user_id=?', [i.id, req.session.userId]);
   if (!r) return bad(res, 'Invite not found.', 404);
   if (new Date(i.starts_at) < Date.now()) return bad(res, 'This meetup has already happened.');
   if (status === 'accepted' && r.status !== 'accepted' && i.accepted_count >= i.max_attendees) return bad(res, 'Sorry — this meetup is full.', 409);
-  const me = db.get('SELECT name FROM users WHERE id=?', [req.session.userId]);
-  db.tx(() => {
-    db.run(`UPDATE invite_recipients SET status=?, responded_at=CURRENT_TIMESTAMP WHERE invite_id=? AND user_id=?`, [status, i.id, req.session.userId], false);
-    if (r.status !== status) notify(i.creator_id, 'rsvp', `${me.name} ${status === 'accepted' ? 'is in for' : 'declined'} ${i.topic_label} at ${i.shop_name}`, i.id);
+  const me = await db.get('SELECT name FROM users WHERE id=?', [req.session.userId]);
+  await db.tx(async () => {
+    await db.run(`UPDATE invite_recipients SET status=?, responded_at=CURRENT_TIMESTAMP WHERE invite_id=? AND user_id=?`, [status, i.id, req.session.userId]);
+    if (r.status !== status) await notify(i.creator_id, 'rsvp', `${me.name} ${status === 'accepted' ? 'is in for' : 'declined'} ${i.topic_label} at ${i.shop_name}`, i.id);
   });
   res.json({ ok: true, status });
 });
-app.get('/api/meetups', auth, (req, res) => {
+app.get('/api/meetups', auth, async (req, res) => {
   const me = req.session.userId;
-  const created = db.all(`${INVITE_SELECT} WHERE i.creator_id=?`, [me]).map((i) => ({ ...i, relation: 'host' }));
-  const accepted = db.all(`${INVITE_SELECT} JOIN invite_recipients r ON r.invite_id=i.id WHERE r.user_id=? AND r.status='accepted'`, [me]).map((i) => ({ ...i, relation: 'attending' }));
-  const now = Date.now(), all = [...created, ...accepted].map((i) => ({ ...i, going: going(i.id) }));
+  const created = (await db.all(`${INVITE_SELECT} WHERE i.creator_id=?`, [me])).map((i) => ({ ...i, relation: 'host' }));
+  const accepted = (await db.all(`${INVITE_SELECT} JOIN invite_recipients r ON r.invite_id=i.id WHERE r.user_id=? AND r.status='accepted'`, [me])).map((i) => ({ ...i, relation: 'attending' }));
+  const now = Date.now(), all = await Promise.all([...created, ...accepted].map(async (i) => ({ ...i, going: await going(i.id) })));
   res.json({
     upcoming: all.filter((i) => new Date(i.starts_at) >= now).sort((a, b) => a.starts_at.localeCompare(b.starts_at)),
     past: all.filter((i) => new Date(i.starts_at) < now).sort((a, b) => b.starts_at.localeCompare(a.starts_at)),
@@ -252,17 +256,19 @@ app.get('/api/meetups', auth, (req, res) => {
 });
 
 // ---------- Notifications ----------
-app.get('/api/notifications', auth, (req, res) =>
-  res.json(db.all('SELECT * FROM notifications WHERE user_id=? ORDER BY id DESC LIMIT 50', [req.session.userId])));
-app.post('/api/notifications/read', auth, (req, res) => {
-  db.run('UPDATE notifications SET is_read=1 WHERE user_id=?', [req.session.userId]); res.json({ ok: true });
+app.get('/api/notifications', auth, async (req, res) =>
+  res.json(await db.all('SELECT * FROM notifications WHERE user_id=? ORDER BY id DESC LIMIT 50', [req.session.userId])));
+app.post('/api/notifications/read', auth, async (req, res) => {
+  await db.run('UPDATE notifications SET is_read=1 WHERE user_id=?', [req.session.userId]); res.json({ ok: true });
 });
 
 app.use('/api', (req, res) => bad(res, 'Not found', 404));
 app.get(/^(?!\/api).*/, (req, res) => res.sendFile(path.join(__dirname, 'public', 'index.html')));
 
-db.init().then(() => {
-  sessionMw = session({ ...sessionOpts, store: new (require('./src/sessionStore'))() });
-  if (seed()) console.log('Seeded demo data. Demo login: demo@coffeebuds.app / coffee123');
+(async () => {
+  await db.init();
+  console.log(`Database: ${db.isPg ? 'Postgres (DATABASE_URL)' : 'SQLite (sql.js) at ' + (process.env.DB_PATH || 'data/coffeebuds.sqlite')}`);
+  sessionMw = session({ ...sessionOpts, store: await require('./src/sessionStore').createStore() });
+  if (await seed()) console.log('Seeded demo data. Demo login: demo@coffeebuds.app / coffee123');
   app.listen(PORT, HOST, () => console.log(`CoffeeBuds running on http://${HOST}:${PORT} (NODE_ENV=${process.env.NODE_ENV || 'development'})`));
-});
+})().catch((e) => { console.error('Startup failed:', e); process.exit(1); });

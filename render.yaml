@@ -12,3 +12,7 @@ services:
         generateValue: true
       - key: NODE_VERSION
         value: "20"
+      # Postgres connection string (e.g. a free Neon database). Set it in the Render dashboard.
+      # When unset the app falls back to SQLite, which Render's free tier wipes on every restart.
+      - key: DATABASE_URL
+        sync: false

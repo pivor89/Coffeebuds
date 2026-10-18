@@ -19,16 +19,17 @@ const SHOPS = [
   ['Jet City Espresso', '3404 N Florida Ave, Tampa, FL', 27.9744, -82.4597],
 ];
 
-function seed() {
-  if (db.get('SELECT COUNT(*) c FROM users').c > 0) return false;
+// Only seeds an empty database, so real data is never overwritten or duplicated on restart.
+async function seed() {
+  if ((await db.get('SELECT COUNT(*) c FROM users')).c > 0) return false;
   const hash = bcrypt.hashSync('coffee123', 10);
-  db.tx(() => {
+  await db.tx(async () => {
     for (const [email, name, loc, lat, lng, topics] of USERS) {
-      const id = db.run('INSERT INTO users(email,password_hash,name,location_label,lat,lng,photo_url) VALUES (?,?,?,?,?,?,?)',
-        [email, hash, name, loc, lat, lng, `https://i.pravatar.cc/150?u=${email}`], false);
-      for (const [t, r] of topics) db.run('INSERT INTO topics(user_id,topic,label,role) VALUES (?,?,?,?)', [id, normalizeTopic(t), t, r], false);
+      const id = await db.run('INSERT INTO users(email,password_hash,name,location_label,lat,lng,photo_url) VALUES (?,?,?,?,?,?,?)',
+        [email, hash, name, loc, lat, lng, `https://i.pravatar.cc/150?u=${email}`]);
+      for (const [t, r] of topics) await db.run('INSERT INTO topics(user_id,topic,label,role) VALUES (?,?,?,?)', [id, normalizeTopic(t), t, r]);
     }
-    for (const s of SHOPS) db.run('INSERT INTO shops(name,address,lat,lng) VALUES (?,?,?,?)', s, false);
+    for (const s of SHOPS) await db.run('INSERT INTO shops(name,address,lat,lng) VALUES (?,?,?,?)', s);
   });
   return true;
 }

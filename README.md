@@ -3,7 +3,7 @@
 Meet people nearby over coffee to learn together. Say you want to learn something, or offer to teach it, and CoffeeBuds invites everyone within 15 miles of the coffee shop who has the opposite role on that topic.
 
 ## Stack
-Node.js (>=18) + Express 5 · SQLite through **sql.js** (WASM, so there's nothing native to build; the database is saved to `data/coffeebuds.sqlite`) · bcryptjs password hashing · express-session cookies · vanilla JS SPA · Leaflet + OpenStreetMap (Nominatim geocoding, Overpass café search with a Nominatim fallback) · Inter + Fraunces.
+Node.js (>=18) + Express 5 · **Postgres** (via `pg`, e.g. a free [Neon](https://neon.tech) database) when `DATABASE_URL` is set, otherwise SQLite through **sql.js** (WASM, so there's nothing native to build; the database is saved to `data/coffeebuds.sqlite`) · bcryptjs password hashing · express-session cookies · vanilla JS SPA · Leaflet + OpenStreetMap (Nominatim geocoding, Overpass café search with a Nominatim fallback) · Inter + Fraunces.
 
 ## Run
 ```bash
@@ -15,23 +15,30 @@ npm run screenshots  # Playwright screenshots → screenshots/ (needs: npx playw
 ```
 On first start the app seeds 8 users around Tampa, FL, plus 4 coffee shops.
 **Demo login:** `demo@coffeebuds.app` / `coffee123`. Every seed user has the password `coffee123` (maya@, jordan@, priya@, sam@, lena@, diego@, grace@example.com).
-To reset, delete `data/coffeebuds.sqlite`.
+To reset, delete `data/coffeebuds.sqlite` (SQLite mode) or drop the tables (Postgres mode). Seeding runs only when the `users` table is empty, so restarts never duplicate or overwrite real data.
 
 ## Matching rule
 `src/matching.js` → `findRecipients()`: candidates are users who have a home lat/lng and whose normalized topic (lowercased, trimmed, spaces collapsed) equals the invite's topic with the **opposite** role (learn ↔ teach). The creator is excluded. A candidate is invited if their haversine distance **from the coffee shop** is ≤ 15 miles.
 
 ## Env vars
-`PORT`, `SESSION_SECRET` (required in prod), `DB_PATH`, `NODE_ENV=production` (secure cookies), `OVERPASS_URL`.
+`PORT`, `SESSION_SECRET` (required in prod), `DATABASE_URL`, `DB_PATH`, `NODE_ENV=production` (secure cookies), `OVERPASS_URL`, `PG_POOL_MAX` (default 5).
+
+### Database: `DATABASE_URL`
+- **Set** (e.g. `postgresql://user:pass@ep-xxx.us-east-2.aws.neon.tech/neondb?sslmode=require`): all app data **and** sessions live in Postgres. On startup the app creates the tables and indexes (`CREATE TABLE IF NOT EXISTS`), and `connect-pg-simple` creates the `session` table. SSL is on with `rejectUnauthorized: false`; any `sslmode` in the URL is ignored in favor of that. `localhost` URLs (or `sslmode=disable`) connect without SSL, for local testing.
+- **Unset**: SQLite via sql.js at `DB_PATH` (default `data/coffeebuds.sqlite`), with sessions in the same file. Local dev and tests use this mode.
+
+To get a free Neon database: create a project at neon.tech, copy the connection string, and set it as `DATABASE_URL`.
 
 ## Deploy
-The app is a single Node process that needs a persistent disk for the SQLite file.
-- **Render**: New Web Service → build `npm install`, start `npm start`. Add a Disk mounted at `/var/data` and set `DB_PATH=/var/data/coffeebuds.sqlite` and `SESSION_SECRET`.
+The app is a single Node process. It needs either `DATABASE_URL` (Postgres) or a persistent disk for the SQLite file.
+- **Render (free tier, via `render.yaml`)**: the free tier's filesystem is wiped on restart, so set `DATABASE_URL` to your Neon connection string in the dashboard (it's declared with `sync: false` in `render.yaml`). `SESSION_SECRET` is generated automatically.
+- **Render with a disk (paid)**: alternatively add a Disk at `/var/data` and set `DB_PATH=/var/data/coffeebuds.sqlite`.
 - **Railway**: deploy the repo, add a Volume at `/data`, and set `DB_PATH=/data/coffeebuds.sqlite` and `SESSION_SECRET`.
 - **Fly.io**: `fly launch` (Node), `fly volumes create data`, mount it at `/data` in `fly.toml`, set `DB_PATH` and `fly secrets set SESSION_SECRET=...`.
-Sessions use the in-memory store, so logins reset on restart. For multiple instances or durable sessions, use a persistent session store (e.g. connect-sqlite3 or Redis), and/or move to Postgres.
+Sessions are stored in the database (Postgres `session` table or the SQLite `sessions` table), so logins survive restarts.
 
 ## Limitations
-- sql.js keeps the DB in memory and rewrites the file after each write. That's fine for small and medium use, but it runs as a single instance.
+- In SQLite mode, sql.js keeps the DB in memory and rewrites the file after each write. That's fine for small and medium use, but it runs as a single instance. Use Postgres mode for durability.
 - Public OSM endpoints are rate-limited; for real traffic, self-host them or use a provider. The app falls back to saved shops plus manual entry.
 - Notifications are in-app only (30s polling); no email or push.
 
