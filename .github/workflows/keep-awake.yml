@@ -1,0 +1,11 @@
+name: Keep CoffeeBuds awake
+on:
+  schedule:
+    - cron: "*/10 * * * *"
+  workflow_dispatch:
+jobs:
+  ping:
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+    steps:
+      - run: curl -fsS -m 90 -o /dev/null -w "%{http_code}\n" https://coffeebuds.onrender.com/ || true
