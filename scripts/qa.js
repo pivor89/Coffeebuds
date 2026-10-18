@@ -8,7 +8,7 @@ const issues = [];
 (async () => {
   const b = await chromium.launch();
   async function session(email) {
-    const ctx = await b.newContext(ctxOpts); const p = await ctx.newPage();
+    const ctx = await b.newContext(ctxOpts); await ctx.addInitScript(() => localStorage.setItem('cb_install_dismissed', '1')); const p = await ctx.newPage();
     p.on('console', (m) => m.type() === 'error' && issues.push(`[console ${email}] ${m.text()}`));
     p.on('pageerror', (e) => issues.push(`[pageerror ${email}] ${e.message}`));
     p.on('response', (r) => r.status() >= 500 && issues.push(`[5xx] ${r.url()}`));
@@ -23,7 +23,7 @@ const issues = [];
     if (r.sw > r.w) issues.push(`[overflow ${label}] scrollWidth ${r.sw} > ${r.w}: ${r.wide.join(', ')}`);
   };
   // logged-out pages
-  const ctx0 = await b.newContext(ctxOpts); const p0 = await ctx0.newPage();
+  const ctx0 = await b.newContext(ctxOpts); await ctx0.addInitScript(() => localStorage.setItem('cb_install_dismissed', '1')); const p0 = await ctx0.newPage();
   await p0.goto(BASE + '/#/login'); await p0.waitForSelector('#f'); await overflow(p0, 'login'); await shot(p0, 'login');
   await p0.goto(BASE + '/#/signup'); await p0.waitForSelector('#name'); await p0.click('button[type=submit]'); await shot(p0, 'signup-validation');
 

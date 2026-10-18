@@ -1,7 +1,7 @@
 <!doctype html>
 <html lang="en">
 <head>
-<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
 <title>CoffeeBuds — learn together over coffee</title>
 <script>/* theme: Paris is the default for everyone; missing or old classic/lounge cookies fall back to paris. Lounge/classic code is kept but unused. */(function(){var v=['paris','lounge'],q=(new URLSearchParams(location.search).get('theme')||'').toLowerCase(),m=document.cookie.match(/(?:^|; )theme=([^;]+)/),t=m?decodeURIComponent(m[1]):'';
 if(v.indexOf(q)>=0){t=q;document.cookie='theme='+q+';path=/;max-age=31536000;samesite=lax';}else if(['classic','default','none'].indexOf(q)>=0){t='';document.cookie='theme=;path=/;max-age=0';}
@@ -10,7 +10,16 @@ if(t!=='paris')t='paris';document.documentElement.setAttribute('data-theme',t);}
 <link href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:ital,wght@0,500;0,600;0,700;1,500;1,600&family=Playfair+Display:ital,wght@0,500;0,600;0,700;1,500&family=Fraunces:opsz,wght@9..144,500;9..144,700&family=Inter:wght@400;500;600&display=swap" rel="stylesheet">
 <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
 <link rel="stylesheet" href="/style.css">
-<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>☕</text></svg>">
+<link rel="manifest" href="/manifest.webmanifest">
+<meta name="theme-color" content="#FBF7F0">
+<meta name="description" content="Learn together over coffee — invite buddies to meet at a nearby café to teach and learn.">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="default">
+<meta name="apple-mobile-web-app-title" content="CoffeeBuds">
+<link rel="apple-touch-icon" href="/icons/apple-touch-icon.png">
+<link rel="icon" type="image/png" sizes="32x32" href="/icons/favicon-32.png">
+<link rel="icon" type="image/svg+xml" href="/icons/icon.svg">
 </head>
 <body>
 <header class="topbar" id="topbar" hidden>
@@ -27,5 +36,6 @@ if(t!=='paris')t='paris';document.documentElement.setAttribute('data-theme',t);}
 <div id="toast" class="toast" hidden></div>
 <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
 <script src="/app.js"></script>
+<script src="/pwa.js"></script>
 </body>
 </html>
