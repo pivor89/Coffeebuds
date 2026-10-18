@@ -21,6 +21,14 @@ const sessionOpts = {
   // 'auto' = Secure cookie when the request arrived over HTTPS (incl. via a trusted proxy/tunnel), plain on http://localhost
   cookie: { httpOnly: true, sameSite: 'lax', secure: 'auto', maxAge: 1000 * 60 * 60 * 24 * 14 },
 };
+// Theme switcher: any page visited with ?theme=paris|lounge stores the choice in a cookie; ?theme=classic resets to the default
+const THEMES = ['paris', 'lounge'];
+app.use((req, res, next) => {
+  const t = typeof req.query.theme === 'string' ? req.query.theme.toLowerCase() : null;
+  if (t && THEMES.includes(t)) res.cookie('theme', t, { sameSite: 'lax', maxAge: 1000 * 60 * 60 * 24 * 365, path: '/' });
+  else if (t && ['classic', 'default', 'none'].includes(t)) res.clearCookie('theme', { path: '/' });
+  next();
+});
 app.use(express.static(path.join(__dirname, 'public')));
 
 const bad = (res, msg, code = 400) => res.status(code).json({ error: msg });
@@ -123,7 +131,8 @@ app.get('/api/shops/nearby', auth, async (req, res) => {
   if (!validLatLng(lat, lng)) return bad(res, 'Set your location first (lat/lng).');
   const radiusM = Math.min(Number(req.query.radius_m) || 5000, 15000);
   const local = db.all('SELECT * FROM shops').map((s) => ({ ...s, source: 'saved', distance: haversineMiles(+lat, +lng, s.lat, s.lng) }))
-    .filter((s) => s.distance <= MATCH_RADIUS_MI);
+    .filter((s) => s.distance <= MATCH_RADIUS_MI)
+    .filter((s, i, arr) => arr.findIndex((o) => o.name.toLowerCase() === s.name.toLowerCase() && Math.abs(o.lat - s.lat) < 0.002) === i);
   let osm = [], warning = null;
   try {
     if (Date.now() < overpassDownUntil) throw new Error('overpass circuit open');

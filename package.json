@@ -10,7 +10,8 @@
     "test": "node --test test/",
     "start": "node server.js",
     "e2e": "node scripts/e2e.js",
-    "screenshots": "node scripts/screenshots.js"
+    "screenshots": "node scripts/screenshots.js",
+    "qa": "node scripts/qa.js mobile && node scripts/qa.js desktop"
   },
   "keywords": [],
   "author": "",

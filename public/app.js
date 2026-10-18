@@ -164,7 +164,7 @@ async function newMeetup() {
   const choose = (s) => {
     shop = s; $('#chosen').innerHTML = `Selected: <b>☕ ${esc(s.name)}</b>${s.address ? ' · ' + esc(s.address) : ''}`;
     app.querySelectorAll('.shopitem').forEach((el) => el.classList.toggle('sel', +el.dataset.i === shops.indexOf(s)));
-    if (map) { marker?.remove(); marker = L.marker([s.lat, s.lng]).addTo(map).bindPopup(esc(s.name)).openPopup(); map.setView([s.lat, s.lng], 14); }
+    if (map) { marker?.remove(); marker = L.marker([s.lat, s.lng], { zIndexOffset: 1000 }).addTo(map).bindPopup(esc(s.name)); map.setView([s.lat, s.lng], 14); }
   };
   const load = async (lat = me.lat, lng = me.lng) => {
     const msg = (t) => { const el = $('#nearMsg'); if (el) el.textContent = t; };

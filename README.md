@@ -46,6 +46,37 @@ Free-license photos from [Unsplash](https://unsplash.com/license) (Unsplash Lice
 | Profile | `profile.webp` | people talking around a wooden table in warm light: https://unsplash.com/photos/1517048676732-d65bc937f952 |
 | Notifications | `notifications.webp` | small group meeting at a café table: https://unsplash.com/photos/1521737604893-d14cc237f11d |
 
+## Themes
+Three looks share the same app. Add `?theme=` to any URL to switch; the choice is saved in a `theme` cookie for a year:
+- *(default, no cookie)*: classic warm coffee and caramel. `?theme=classic` switches back to it.
+- `?theme=paris`: **Bright Parisian café**. Airy ivory and cream with soft caramel, italic Playfair Display headings, photos of sunny Paris-style café terraces.
+- `?theme=lounge`: **Luxury lounge**. Deep espresso and burgundy with gold accents, Cormorant Garamond headings, photos of plush, warmly lit lounges.
+
+The cookie is set on the server (any request carrying `?theme=`) and by a small inline script in `index.html` that adds `data-theme` to `<html>` before first paint. Theme styles live at the end of `public/style.css`. Run `node scripts/theme-screenshots.js` to take mobile screenshots of both themes (`screenshots/theme-*.png`).
+
+### Theme photo credits
+Free-license photos from [Pexels](https://www.pexels.com/license/) (Pexels License) and [Unsplash](https://unsplash.com/license) (Unsplash License), resized to WebP, each with a blurred `-blur.webp` variant for the page background.
+
+**Paris** (`public/images/paris/`)
+| Page | File | Photo |
+|---|---|---|
+| Login / sign up | `login.webp` | people at a sunny Parisian café terrace, by Markus Winkler (Unsplash): https://unsplash.com/photos/IAqkfmX6K1M |
+| Invites inbox | `inbox.webp` | two friends laughing over coffee at a sidewalk café (Pexels): https://www.pexels.com/photo/5047023/ |
+| New meetup | `new.webp` | people chatting at a Paris street café (Pexels): https://www.pexels.com/photo/24415132/ |
+| My meetups | `meetups.webp` | busy Parisian café terrace in summer (Pexels): https://www.pexels.com/photo/28179772/ |
+| Profile | `profile.webp` | two friends talking over coffee in a bright café (Pexels): https://www.pexels.com/photo/36765287/ |
+| Notifications | `notifications.webp` | two men talking over coffee on a café terrace (Pexels): https://www.pexels.com/photo/11284053/ |
+
+**Lounge** (`public/images/lounge/`)
+| Page | File | Photo |
+|---|---|---|
+| Login / sign up | `login.webp` | women talking in a plush hotel lounge with velvet armchairs (Pexels): https://www.pexels.com/photo/3926224/ |
+| Invites inbox | `inbox.webp` | three women chatting in an upscale lounge (Pexels): https://www.pexels.com/photo/3926221/ |
+| New meetup | `new.webp` | conversation on velvet armchairs in a warmly lit lounge (Pexels): https://www.pexels.com/photo/3926226/ |
+| My meetups | `meetups.webp` | friends chatting at a lamp-lit table in an elegant salon (Pexels): https://www.pexels.com/photo/3926216/ |
+| Profile | `profile.webp` | couple relaxing in a stylish lounge with leather seating (Pexels): https://www.pexels.com/photo/30271475/ |
+| Notifications | `notifications.webp` | friends talking in an upscale lounge, seen up close (Pexels): https://www.pexels.com/photo/3926223/ |
+
 ## Deploying on Render (free tier)
 
 `render.yaml` is included (Blueprint). Manual settings: Runtime **Node**, Build `npm install`, Start `npm start`, Plan **Free**, env `NODE_ENV=production`, `SESSION_SECRET=<random>` (optionally `NODE_VERSION=20`). The app listens on `process.env.PORT` and binds `0.0.0.0`.
