@@ -35,6 +35,29 @@ const issues = [];
   await demo.fill('#tnew', 'Resume Writing'); await demo.selectOption('#trole', 'teach'); await demo.click('#tf button');
   await demo.click('#tsave'); await demo.waitForTimeout(500);
   await overflow(demo, 'profile'); await shot(demo, 'profile', true);
+  // --- photos: avatar upload + Meetups wall ---
+  const IMG = __dirname + '/../public/images/paris/';
+  await demo.setInputFiles('#photoFile', IMG + 'profile.webp'); await demo.waitForFunction(() => document.querySelector('.avatar-upload img.avatar')?.src.includes('/img/'), null, { timeout: 15000 }).catch(() => issues.push('[photos] avatar upload did not show'));
+  if (await demo.$('#photo')) issues.push('[photos] photo URL field still present');
+  await demo.waitForTimeout(500); await demo.locator('#pf').screenshot({ path: OUT + 'photos-' + mode + '-avatar-upload.png' });
+  const wallPost = async (p, file, caption) => {
+    await p.goto(BASE + '/#/wall'); await p.waitForSelector('#pf');
+    await p.setInputFiles('#pfile', IMG + file); await p.waitForSelector('#drop img', { timeout: 15000 });
+    await p.fill('#cap', caption); return p;
+  };
+  await demo.goto(BASE + '/#/wall'); await demo.waitForSelector('#pf'); await overflow(demo, 'wall-empty');
+  if (!(await demo.$('.wall .post'))) { await demo.waitForTimeout(600); await demo.screenshot({ path: OUT + 'photos-' + mode + '-wall-empty.png', fullPage: true }); }
+  for (const [f, c] of [['inbox.webp', 'Morning croissants and a crash course in sourdough starters.'], ['notifications.webp', 'Spanish practice over café con leche — muy bien!'], ['new.webp', '']]) {
+    await wallPost(demo, f, c); if (f === 'new.webp') { await demo.waitForTimeout(400); await demo.screenshot({ path: OUT + 'photos-' + mode + '-upload.png' }); }
+    const before = await demo.$$eval('.wall .post', (e) => e.length); await demo.click('#pbtn');
+    await demo.waitForFunction((n) => document.querySelectorAll('.wall .post').length > n, before, { timeout: 15000 }).catch(() => issues.push('[photos] post did not appear: ' + f));
+  }
+  await demo.goto(BASE + '/#/wall'); await demo.waitForSelector('.wall .post', { timeout: 10000 }).catch(() => issues.push('[photos] no posts on wall'));
+  const nPosts = await demo.$$eval('.wall .post', (e) => e.length); if (nPosts < 3) issues.push('[photos] expected >=3 posts, got ' + nPosts);
+  if (!(await demo.$('.wall .post [data-delpost]'))) issues.push('[photos] own post has no delete');
+  await demo.waitForFunction(() => [...document.querySelectorAll('.wall .post img')].every((i) => i.complete && i.naturalWidth > 0), null, { timeout: 10000 }).catch(() => issues.push('[photos] wall images did not load'));
+  await overflow(demo, 'wall'); await demo.waitForTimeout(600); await demo.screenshot({ path: OUT + 'photos-' + mode + '-wall.png', fullPage: true });
+  await demo.goto(BASE + '/#/profile'); await demo.waitForSelector('#tlist');
   // new 'learn' meetup with searched cafe
   await demo.goto(BASE + '/#/new'); await demo.waitForSelector('.shopitem', { timeout: 20000 });
   await overflow(demo, 'new'); await shot(demo, 'new-meetup', true);

@@ -3,11 +3,13 @@ const BASE = process.argv[2] || 'http://localhost:3000';
 const assert = require('node:assert');
 function client() {
   let cookie = '';
-  return async (path, method = 'GET', body) => {
+  const fn = async (path, method = 'GET', body) => {
     const r = await fetch(BASE + '/api' + path, { method, headers: { 'Content-Type': 'application/json', 'X-Requested-With': 'CoffeeBuds', cookie }, body: body && JSON.stringify(body) });
     const sc = r.headers.get('set-cookie'); if (sc) cookie = sc.split(';')[0];
+    fn.cookie = cookie;
     return { status: r.status, data: await r.json().catch(() => null) };
   };
+  return fn;
 }
 const ok = (m) => console.log('  ✓ ' + m);
 const inTwoDays = new Date(Date.now() + 2 * 864e5).toISOString();
@@ -61,7 +63,6 @@ const inTwoDays = new Date(Date.now() + 2 * 864e5).toISOString();
   assert.ok(h.get('content-security-policy')?.includes("frame-ancestors 'none'")); assert.equal(h.get('x-content-type-options'), 'nosniff'); assert.ok(!h.get('x-powered-by')); ok('security headers present (CSP, nosniff, no x-powered-by)');
   r = await taylor('/me'); assert.ok(!('password_hash' in r.data)); assert.equal(r.data.lat, 27.95); ok('home location stored coarsely (~1 km) and no hash in /me');
   r = await demo('/invites/' + inviteId); assert.ok(!JSON.stringify(r.data).match(/password|@example\.com|"email"/)); ok('invite payload leaks no emails/hashes');
-  r = await taylor('/profile', 'PUT', { name: 'x', photo_url: 'javascript:alert(1)' }); assert.equal(r.status, 400); ok('rejects non-https photo URL');
   r = await taylor('/profile', 'PUT', { name: 'y'.repeat(81) }); assert.equal(r.status, 400); ok('name length limit');
   r = await taylor("/invites/1%20OR%201=1"); assert.equal(r.status, 404); ok('non-numeric ids rejected');
   r = await taylor('/signup', 'POST', { email: `short${stamp}@example.com`, password: 'short', name: 'S' }); assert.equal(r.status, 400); ok('password min length 8');
@@ -82,5 +83,53 @@ const inTwoDays = new Date(Date.now() + 2 * 864e5).toISOString();
   assert.ok(!(await taylor('/invites/inbox')).data.some((i) => i.id === jid)); ok('blocker\'s invites do not reach the blocked user either');
   r = await jordan(`/users/${taylorId}/block`, 'DELETE'); assert.equal((await jordan('/blocks')).data.length, 0); ok('unblock');
   r = await jordan(`/users/${jordanId}/block`, 'POST'); assert.equal(r.status, 400); ok('cannot block yourself');
+
+  // ---------- Photos ----------
+  const sharp = require('sharp');
+  const exifJpeg = await sharp({ create: { width: 2400, height: 1800, channels: 3, background: '#a0522d' } }).jpeg()
+    .withExif({ IFD0: { Copyright: 'SECRET-EXIF-MARKER', ImageDescription: 'GPS 27.95 -82.45' } }).toBuffer();
+  assert.ok((await sharp(exifJpeg).metadata()).exif); // fixture really has EXIF
+  const up = (c, path, buf, type = 'image/jpeg') => fetch(BASE + '/api' + path, { method: 'POST', headers: { 'Content-Type': type, 'X-Requested-With': 'CoffeeBuds', cookie: c.cookie }, body: buf })
+    .then(async (x) => ({ status: x.status, data: await x.json().catch(() => null) }));
+  // expose cookies from client() for raw uploads
+  const ck = async (c) => { const m = await c('/me'); return m; };
+  await ck(taylor);
+  x = await fetch(BASE + '/api/uploads', { method: 'POST', headers: { 'Content-Type': 'image/jpeg', 'X-Requested-With': 'CoffeeBuds' }, body: exifJpeg }); assert.equal(x.status, 401); ok('upload requires login');
+  r = await up(taylor, '/uploads', Buffer.from('<?php echo 1; ?> definitely not an image....'));
+  assert.equal(r.status, 400); ok('upload rejects non-image by magic bytes: ' + r.data.error);
+  r = await up(taylor, '/uploads', Buffer.concat([Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]), Buffer.alloc(64)]), 'image/png');
+  assert.equal(r.status, 400); ok('corrupt PNG rejected');
+  r = await up(taylor, '/uploads', Buffer.alloc(7 * 1024 * 1024, 1)); assert.equal(r.status, 413); ok('size cap enforced (413)');
+  r = await up(taylor, '/uploads', exifJpeg); assert.equal(r.status, 201); const imgId = r.data.id;
+  assert.ok(r.data.width <= 1600 && r.data.height <= 1600); ok(`wall photo resized to ${r.data.width}x${r.data.height}`);
+  x = await fetch(BASE + r.data.url); const ib = Buffer.from(await x.arrayBuffer());
+  assert.equal(x.headers.get('content-type'), 'image/webp'); assert.match(x.headers.get('cache-control'), /max-age=31536000.*immutable/);
+  const meta = await sharp(ib).metadata(); assert.ok(!meta.exif && !ib.includes('SECRET-EXIF-MARKER')); ok('served from /img with long cache, re-encoded WebP, EXIF stripped');
+  x = await fetch(BASE + '/img/' + 'f'.repeat(32)); assert.equal(x.status, 404); x = await fetch(BASE + '/img/../server.js'); assert.notEqual(x.headers.get('content-type'), 'application/javascript'); ok('unknown/invalid image ids 404');
+  r = await up(taylor, '/profile/photo', exifJpeg); assert.equal(r.status, 201); assert.match(r.data.photo_url, /^\/img\/[a-f0-9]{32}$/);
+  const av = await sharp(Buffer.from(await (await fetch(BASE + r.data.photo_url)).arrayBuffer())).metadata(); assert.ok(av.width <= 512 && !av.exif); ok('avatar upload → 512px, no EXIF');
+  r = await taylor('/profile', 'PUT', { name: 'Taylor Test', photo_url: 'https://evil.example/x.png' }); assert.match(r.data.photo_url, /^\/img\//); ok('photo_url can no longer be set via profile');
+  // posts
+  r = await taylor('/posts', 'POST', { image_id: imgId, caption: 'z'.repeat(281) }); assert.equal(r.status, 400); ok('caption length limit');
+  r = await demo('/posts', 'POST', { image_id: imgId }); assert.equal(r.status, 400); ok("can't post someone else's upload");
+  r = await taylor('/posts', 'POST', { image_id: imgId, caption: 'Great chat about LLMs <script>alert(1)</script>', invite_id: jid }); assert.equal(r.status, 400); ok("can't link a meetup you didn't host/attend");
+  r = await taylor('/posts', 'POST', { image_id: imgId, caption: 'Great chat about LLMs <script>alert(1)</script>', invite_id: inviteId });
+  assert.equal(r.status, 201); assert.equal(r.data.shop_name, 'Kahwa Coffee'); const postId = r.data.id; ok('post with linked meetup (shop derived)');
+  r = await taylor('/posts', 'POST', { image_id: imgId }); assert.equal(r.status, 400); ok('an upload can only be posted once');
+  r = await demo('/posts'); const p0 = r.data.items.find((p) => p.id === postId); assert.ok(p0 && !p0.mine && !JSON.stringify(p0).match(/email|password|lat/)); ok('feed shows post, no private fields');
+  r = await demo('/posts/' + postId, 'DELETE'); assert.equal(r.status, 403); ok("can't delete others' posts");
+  r = await demo(`/posts/${postId}/report`, 'POST', { reason: 'Not a coffee photo' }); assert.equal(r.status, 201); ok('report post');
+  r = await taylor(`/posts/${postId}/report`, 'POST', { reason: 'x' }); assert.equal(r.status, 400); ok("can't report own post");
+  await demo(`/users/${taylorId}/block`, 'POST');
+  assert.ok(!(await demo('/posts')).data.items.some((p) => p.id === postId)); ok('blocked user\'s posts hidden from blocker');
+  const demoUp = await up(demo, '/uploads', exifJpeg); const dp = await demo('/posts', 'POST', { image_id: demoUp.data.id, caption: 'demo post' });
+  assert.ok(!(await taylor('/posts')).data.items.some((p) => p.id === dp.data.id)); ok('blocker\'s posts hidden from blocked user');
+  await demo(`/users/${taylorId}/block`, 'DELETE');
+  // pagination
+  const ids = []; for (let k = 0; k < 3; k++) { const u2 = await up(maya, '/uploads', exifJpeg); ids.push((await maya('/posts', 'POST', { image_id: u2.data.id, caption: 'p' + k })).data.id); }
+  r = await maya('/posts?limit=2'); assert.equal(r.data.items.length, 2); assert.ok(r.data.next_before);
+  const r2b = await maya('/posts?limit=2&before=' + r.data.next_before); assert.ok(r2b.data.items.every((p) => p.id < r.data.next_before)); ok('feed newest-first with cursor pagination');
+  r = await taylor('/posts/' + postId, 'DELETE'); assert.equal(r.status, 200); x = await fetch(BASE + '/img/' + imgId); assert.equal(x.status, 404); ok('delete own post removes its image');
+  r = await fetch(BASE + '/api/posts'); assert.equal(r.status, 401); ok('feed requires login');
   console.log('\nAll E2E checks passed.');
 })().catch((e) => { console.error('E2E FAILED:', e); process.exit(1); });

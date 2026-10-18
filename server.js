@@ -7,6 +7,7 @@ const { rateLimit } = require('express-rate-limit');
 const db = require('./src/db');
 const { seed, removeDemoAccounts, coarsenHomeLocations } = require('./src/seed');
 const stats = require('./src/stats');
+const images = require('./src/images');
 const { findRecipients, normalizeTopic, haversineMiles, MATCH_RADIUS_MI } = require('./src/matching');
 
 const app = express();
@@ -75,6 +76,14 @@ app.get('/manifest.webmanifest', (req, res) => {
 });
 app.get('/favicon.ico', (req, res) => res.sendFile(path.join(__dirname, 'public', 'favicon.ico')));
 app.use('/api', (req, res, next) => { res.set('Cache-Control', 'no-store'); next(); });
+// User images live in the DB under unguessable random ids; content never changes for an id, so cache it for a year.
+app.get('/img/:imgId', async (req, res) => {
+  if (!/^[a-f0-9]{32}$/.test(req.params.imgId)) return res.status(404).end();
+  const row = await db.get('SELECT mime,data FROM images WHERE id=?', [req.params.imgId]);
+  if (!row) return res.status(404).set('Cache-Control', 'no-store').end();
+  res.set({ 'Content-Type': row.mime, 'Cache-Control': 'public, max-age=31536000, immutable', 'Content-Disposition': 'inline', 'Cross-Origin-Resource-Policy': 'same-origin' });
+  res.send(Buffer.from(row.data));
+});
 app.use(stats.middleware);
 app.use(express.static(path.join(__dirname, 'public')));
 
@@ -84,6 +93,9 @@ const limiter = (windowMin, limit, msg) => rateLimit({ windowMs: windowMin * 60e
 const loginLimiter = limiter(15, 10, 'Too many login attempts. Please wait 15 minutes and try again.');
 const signupLimiter = limiter(60, 5, 'Too many sign-ups from this network. Please try again later.');
 const inviteLimiter = limiter(60, 20, "You're creating invites too quickly. Please try again later.");
+const uploadLimiter = limiter(60, 30, 'Too many uploads. Please try again later.');
+const postLimiter = limiter(60, 10, "You're posting too quickly — try again in a bit.");
+const rawImage = express.raw({ type: ['image/*', 'application/octet-stream'], limit: images.MAX_INPUT_BYTES });
 const reportLimiter = limiter(60, 10, 'Too many reports. Please try again later.');
 const BCRYPT_COST = 12;
 const DUMMY_HASH = bcrypt.hashSync('timing-equalizer-not-a-password', BCRYPT_COST);
@@ -138,17 +150,33 @@ app.get('/api/me', auth, async (req, res) => res.json(await userPayload(req.sess
 
 // ---------- Profile ----------
 app.put('/api/profile', auth, async (req, res) => {
-  const { name, photo_url, location_label, lat, lng } = req.body || {};
+  const { name, location_label, lat, lng } = req.body || {};
   if (typeof name !== 'string' || !name.trim()) return bad(res, 'Name is required.');
   if (name.trim().length > 80) return bad(res, 'Name must be 80 characters or fewer.');
-  const photo = photo_url ? String(photo_url).trim() : '';
-  if (photo) { let ok = photo.length <= 500; try { ok = ok && new URL(photo).protocol === 'https:'; } catch { ok = false; } if (!ok) return bad(res, 'Photo URL must be a valid https:// link (max 500 characters).'); }
   if (location_label != null && String(location_label).length > 200) return bad(res, 'Location must be 200 characters or fewer.');
   const hasLoc = isNum(lat) || isNum(lng);
   if (hasLoc && !validLatLng(lat, lng)) return bad(res, 'Latitude/longitude are invalid.');
-  await db.run('UPDATE users SET name=?,photo_url=?,location_label=?,lat=?,lng=? WHERE id=?',
-    [name.trim(), photo || null, str(location_label, 200) || null, hasLoc ? coarse(lat) : null, hasLoc ? coarse(lng) : null, req.session.userId]);
+  await db.run('UPDATE users SET name=?,location_label=?,lat=?,lng=? WHERE id=?',
+    [name.trim(), str(location_label, 200) || null, hasLoc ? coarse(lat) : null, hasLoc ? coarse(lng) : null, req.session.userId]);
   res.json(await userPayload(req.session.userId));
+});
+// Profile photo: client sends the (already resized) image bytes; we sniff, re-encode to 512px WebP without metadata and store it.
+const ownImageId = (url) => (typeof url === 'string' && /^\/img\/([a-f0-9]{32})$/.exec(url)?.[1]) || null;
+app.post('/api/profile/photo', auth, uploadLimiter, rawImage, async (req, res) => {
+  let img; try { img = await images.processImage(req.body, 512); } catch (e) { return bad(res, e.user ? e.message : 'Upload failed.'); }
+  const me = req.session.userId, prev = ownImageId((await db.get('SELECT photo_url FROM users WHERE id=?', [me]))?.photo_url);
+  await db.tx(async () => {
+    const id = await images.saveImage(me, img, 'avatar');
+    await db.run('UPDATE users SET photo_url=? WHERE id=?', ['/img/' + id, me]);
+    if (prev) await db.run("DELETE FROM images WHERE id=? AND owner_id=? AND kind='avatar'", [prev, me]);
+  });
+  res.status(201).json(await userPayload(me));
+});
+app.delete('/api/profile/photo', auth, async (req, res) => {
+  const me = req.session.userId, prev = ownImageId((await db.get('SELECT photo_url FROM users WHERE id=?', [me]))?.photo_url);
+  await db.run('UPDATE users SET photo_url=NULL WHERE id=?', [me]);
+  if (prev) await db.run("DELETE FROM images WHERE id=? AND owner_id=? AND kind='avatar'", [prev, me]);
+  res.json(await userPayload(me));
 });
 app.put('/api/topics', auth, async (req, res) => {
   const list = Array.isArray(req.body?.topics) ? req.body.topics : null;
@@ -344,6 +372,64 @@ app.post('/api/notifications/read', auth, async (req, res) => {
   await db.run('UPDATE notifications SET is_read=1 WHERE user_id=?', [req.session.userId]); res.json({ ok: true });
 });
 
+// ---------- Photo wall ----------
+app.post('/api/uploads', auth, uploadLimiter, rawImage, async (req, res) => {
+  let img; try { img = await images.processImage(req.body, 1600); } catch (e) { return bad(res, e.user ? e.message : 'Upload failed.'); }
+  const id = await images.saveImage(req.session.userId, img, 'post');
+  res.status(201).json({ id, url: '/img/' + id, width: img.width, height: img.height });
+});
+const POST_SELECT = `SELECT p.id,p.user_id,p.caption,p.created_at,p.invite_id,p.shop_id,'/img/'||p.image_id AS image_url,im.width,im.height,
+  u.name AS user_name,u.photo_url AS user_photo,s.name AS shop_name,i.topic_label AS invite_topic
+  FROM posts p JOIN users u ON u.id=p.user_id JOIN images im ON im.id=p.image_id LEFT JOIN shops s ON s.id=p.shop_id LEFT JOIN invites i ON i.id=p.invite_id`;
+app.get('/api/posts', auth, async (req, res) => {
+  const me = req.session.userId, limit = Math.min(Math.max(parseInt(req.query.limit, 10) || 12, 1), 30);
+  const before = isId(req.query.before) ? Number(req.query.before) : null;
+  const rows = await db.all(`${POST_SELECT} WHERE p.user_id NOT IN (SELECT blocked_id FROM blocks WHERE blocker_id=?) AND p.user_id NOT IN (SELECT blocker_id FROM blocks WHERE blocked_id=?)
+    ${before ? 'AND p.id<?' : ''} ORDER BY p.id DESC LIMIT ?`, [me, me, ...(before ? [before] : []), limit + 1]);
+  const more = rows.length > limit; const items = rows.slice(0, limit).map((p) => ({ ...p, mine: p.user_id === me }));
+  res.json({ items, next_before: more ? items[items.length - 1].id : null });
+});
+app.post('/api/posts', auth, postLimiter, async (req, res) => {
+  const me = req.session.userId, b = req.body || {};
+  if (typeof b.image_id !== 'string' || !/^[a-f0-9]{32}$/.test(b.image_id)) return bad(res, 'Add a photo first.');
+  const img = await db.get("SELECT id FROM images WHERE id=? AND owner_id=? AND kind='post'", [b.image_id, me]);
+  if (!img || await db.get('SELECT id FROM posts WHERE image_id=?', [b.image_id])) return bad(res, 'Add a photo first.');
+  if (b.caption != null && String(b.caption).length > 280) return bad(res, 'Caption must be 280 characters or fewer.');
+  let inviteId = null, shopId = null;
+  if (b.invite_id != null && b.invite_id !== '') {
+    if (!isId(b.invite_id)) return bad(res, 'Invalid meetup.');
+    const inv = await db.get(`SELECT i.id,i.shop_id FROM invites i WHERE i.id=? AND (i.creator_id=? OR EXISTS (SELECT 1 FROM invite_recipients r WHERE r.invite_id=i.id AND r.user_id=? AND r.status='accepted'))`, [b.invite_id, me, me]);
+    if (!inv) return bad(res, 'You can only link meetups you hosted or attended.');
+    inviteId = inv.id; shopId = inv.shop_id;
+  } else if (b.shop_id != null && b.shop_id !== '') {
+    if (!isId(b.shop_id) || !(await db.get('SELECT id FROM shops WHERE id=?', [b.shop_id]))) return bad(res, 'Invalid coffee shop.');
+    shopId = Number(b.shop_id);
+  }
+  const id = await db.run('INSERT INTO posts(user_id,image_id,caption,invite_id,shop_id) VALUES (?,?,?,?,?)', [me, b.image_id, str(b.caption, 280) || null, inviteId, shopId]);
+  res.status(201).json({ ...(await db.get(`${POST_SELECT} WHERE p.id=?`, [id])), mine: true });
+});
+app.delete('/api/posts/:id', auth, async (req, res) => {
+  const p = await db.get('SELECT id,user_id,image_id FROM posts WHERE id=?', [req.params.id]);
+  if (!p) return bad(res, 'Post not found.', 404);
+  if (p.user_id !== req.session.userId) return bad(res, 'You can only delete your own posts.', 403);
+  await db.tx(async () => { await db.run('DELETE FROM posts WHERE id=?', [p.id]); await images.deleteImage(p.image_id); });
+  res.json({ ok: true });
+});
+app.post('/api/posts/:id/report', auth, reportLimiter, async (req, res) => {
+  const me = req.session.userId, reason = str(req.body?.reason, 1000);
+  const p = await db.get('SELECT id,user_id FROM posts WHERE id=?', [req.params.id]);
+  if (!p || (await blockedWith(me)).has(p.user_id)) return bad(res, 'Post not found.', 404);
+  if (p.user_id === me) return bad(res, "You can't report your own post.");
+  if (!reason) return bad(res, 'Please describe the problem.');
+  await db.run('INSERT INTO reports(reporter_id,reported_id,post_id,reason) VALUES (?,?,?,?)', [me, p.user_id, p.id, reason]);
+  console.warn(`SAFETY REPORT: user ${me} reported post ${p.id} by user ${p.user_id}`);
+  res.status(201).json({ ok: true });
+});
+// Uploaded wall photos that never became a post are removed after an hour.
+const sweepOrphans = () => db.run("DELETE FROM images WHERE kind='post' AND created_at < ? AND id NOT IN (SELECT image_id FROM posts)",
+  [new Date(Date.now() - 3600e3).toISOString().replace('T', ' ').slice(0, 19)]).catch((e) => console.error('orphan sweep:', e.message));
+setInterval(sweepOrphans, 3600e3).unref();
+
 // ---------- Safety: block & report ----------
 app.post('/api/users/:id/block', auth, async (req, res) => {
   const id = Number(req.params.id), me = req.session.userId;
@@ -391,5 +477,6 @@ app.use((err, req, res, next) => {
   if (PROD) await removeDemoAccounts();
   else if (await seed()) console.log('Seeded local demo data (dev only).');
   await coarsenHomeLocations();
+  sweepOrphans();
   app.listen(PORT, HOST, () => console.log(`CoffeeBuds running on http://${HOST}:${PORT} (NODE_ENV=${process.env.NODE_ENV || 'development'})`));
 })().catch((e) => { console.error('Startup failed:', e); process.exit(1); });

@@ -27,6 +27,10 @@ CREATE TABLE IF NOT EXISTS notifications (id INTEGER PRIMARY KEY, user_id INTEGE
 CREATE TABLE IF NOT EXISTS blocks (blocker_id INTEGER NOT NULL, blocked_id INTEGER NOT NULL, created_at TEXT DEFAULT CURRENT_TIMESTAMP, PRIMARY KEY(blocker_id, blocked_id));
 CREATE TABLE IF NOT EXISTS reports (id INTEGER PRIMARY KEY, reporter_id INTEGER NOT NULL, reported_id INTEGER NOT NULL, invite_id INTEGER, reason TEXT NOT NULL,
   status TEXT NOT NULL DEFAULT 'open', created_at TEXT DEFAULT CURRENT_TIMESTAMP);
+CREATE TABLE IF NOT EXISTS images (id TEXT PRIMARY KEY, owner_id INTEGER NOT NULL, kind TEXT NOT NULL, mime TEXT NOT NULL, data BLOB NOT NULL,
+  width INTEGER, height INTEGER, created_at TEXT DEFAULT CURRENT_TIMESTAMP);
+CREATE TABLE IF NOT EXISTS posts (id INTEGER PRIMARY KEY, user_id INTEGER NOT NULL, image_id TEXT NOT NULL, caption TEXT, invite_id INTEGER, shop_id INTEGER,
+  created_at TEXT DEFAULT CURRENT_TIMESTAMP);
 `;
 
 // Postgres equivalent. Timestamps stay TEXT in SQLite's 'YYYY-MM-DD HH:MM:SS' (UTC) format so app behavior is identical.
@@ -52,6 +56,12 @@ CREATE TABLE IF NOT EXISTS blocks (blocker_id INTEGER NOT NULL, blocked_id INTEG
 CREATE TABLE IF NOT EXISTS reports (id SERIAL PRIMARY KEY, reporter_id INTEGER NOT NULL, reported_id INTEGER NOT NULL, invite_id INTEGER, reason TEXT NOT NULL,
   status TEXT NOT NULL DEFAULT 'open', created_at TEXT DEFAULT ${PG_NOW});
 CREATE INDEX IF NOT EXISTS idx_blocks_blocked ON blocks(blocked_id);
+CREATE TABLE IF NOT EXISTS images (id TEXT PRIMARY KEY, owner_id INTEGER NOT NULL, kind TEXT NOT NULL, mime TEXT NOT NULL, data BYTEA NOT NULL,
+  width INTEGER, height INTEGER, created_at TEXT DEFAULT ${PG_NOW});
+CREATE TABLE IF NOT EXISTS posts (id SERIAL PRIMARY KEY, user_id INTEGER NOT NULL, image_id TEXT NOT NULL, caption TEXT, invite_id INTEGER, shop_id INTEGER,
+  created_at TEXT DEFAULT ${PG_NOW});
+CREATE INDEX IF NOT EXISTS idx_posts_user ON posts(user_id);
+ALTER TABLE reports ADD COLUMN IF NOT EXISTS post_id INTEGER;
 `;
 
 // ---------------- SQLite (sql.js) backend ----------------
@@ -67,6 +77,7 @@ const sqlite = {
       CREATE INDEX IF NOT EXISTS idx_invites_creator ON invites(creator_id);
       CREATE INDEX IF NOT EXISTS idx_recipients_user ON invite_recipients(user_id);
       CREATE INDEX IF NOT EXISTS idx_notifications_user ON notifications(user_id, is_read);`);
+    try { sdb.exec('ALTER TABLE reports ADD COLUMN post_id INTEGER'); } catch { /* already there */ }
     sqlite.save();
   },
   save() { fs.writeFileSync(DB_PATH, Buffer.from(sdb.export())); },
@@ -120,7 +131,7 @@ const pg = {
   async run(sql, params) {
     let q = toPg(sql);
     // Mirror sqlite's last_insert_rowid() for tables with a serial id
-    const wantsId = /^\s*INSERT\s+INTO\s+(users|topics|shops|invites|notifications|reports)\b/i.test(q) && !/RETURNING/i.test(q);
+    const wantsId = /^\s*INSERT\s+INTO\s+(users|topics|shops|invites|notifications|reports|posts)\b/i.test(q) && !/RETURNING/i.test(q);
     if (wantsId) q += ' RETURNING id';
     const r = await pg.client().query(q, params);
     return wantsId ? r.rows[0]?.id : undefined;

@@ -294,3 +294,26 @@ body{padding-left:env(safe-area-inset-left);padding-right:env(safe-area-inset-ri
   .container{padding-bottom:calc(100px + env(safe-area-inset-bottom))}
   .toast{bottom:calc(84px + env(safe-area-inset-bottom))}
 }
+
+/* ---------- Photos (avatar upload + Meetups wall) ---------- */
+body.page-wall{--img:url(/images/meetups.webp);--blur:url(/images/meetups-blur.webp)}
+html[data-theme] body.page-wall{--img:var(--t-meetups);--blur:var(--t-meetups-b)}
+.avatar-upload{position:relative;cursor:pointer;display:inline-block;border-radius:50%}
+.avatar-upload .cam{position:absolute;right:-2px;bottom:-2px;background:var(--white);border:1px solid var(--line);border-radius:50%;width:26px;height:26px;display:grid;place-items:center;font-size:13px;box-shadow:var(--shadow)}
+.avatar-upload:hover .avatar{filter:brightness(.92)}
+.composer{margin-top:16px}
+.composer-grid{display:grid;grid-template-columns:minmax(180px,240px) 1fr;gap:18px;align-items:stretch}
+.drop{position:relative;display:grid;place-items:center;min-height:200px;border:1.5px dashed var(--caramel);border-radius:18px;background:var(--cream);cursor:pointer;overflow:hidden;text-align:center;transition:background .2s}
+.drop:hover{background:var(--cream2)}.drop.busy{opacity:.6}
+.drop-empty{display:flex;flex-direction:column;gap:4px;align-items:center;padding:16px}.drop .big{font-size:34px}
+.drop img{position:absolute;inset:0;width:100%;height:100%;object-fit:cover}
+.drop .change{position:absolute;bottom:10px;right:10px;background:rgba(43,29,22,.75);color:var(--cream);padding:4px 10px;border-radius:999px;font-size:12px}
+.wall{columns:3 260px;column-gap:18px;margin-top:22px}
+.post{break-inside:avoid;margin:0 0 18px;background:var(--white);border:1px solid var(--line);border-radius:20px;overflow:hidden;box-shadow:var(--shadow)}
+.post img{display:block;width:100%;height:auto;background:var(--cream2)}
+.post figcaption{padding:12px 14px 14px}
+.post .cap{margin:0 0 8px;font-family:'Cormorant Garamond','Playfair Display',serif;font-size:19px;line-height:1.3;font-style:italic}
+.post .tags{display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-bottom:10px}
+.post .by{display:flex;align-items:center;gap:8px}.post .by .avatar{width:28px;height:28px;font-size:13px}
+.linkbtn{margin-left:auto;background:none;border:0;color:var(--muted,#8a7a6d);font-size:12px;cursor:pointer;padding:4px;text-decoration:underline}
+@media (max-width:760px){.composer-grid{grid-template-columns:1fr}.drop{min-height:180px}.wall{columns:2 150px;column-gap:10px}.post{margin-bottom:10px;border-radius:14px}.post .cap{font-size:16px}}

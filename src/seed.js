@@ -45,6 +45,9 @@ async function removeDemoAccounts() {
       await db.run(`DELETE FROM invite_recipients WHERE user_id=? OR invite_id IN (${inv})`, [u.id, u.id]);
       await db.run(`DELETE FROM notifications WHERE user_id=? OR invite_id IN (${inv})`, [u.id, u.id]);
       await db.run(`DELETE FROM reports WHERE reporter_id=? OR reported_id=? OR invite_id IN (${inv})`, [u.id, u.id, u.id]);
+      await db.run(`DELETE FROM images WHERE id IN (SELECT image_id FROM posts WHERE user_id=? OR invite_id IN (${inv}))`, [u.id, u.id]).catch(() => {});
+      await db.run(`DELETE FROM posts WHERE user_id=? OR invite_id IN (${inv})`, [u.id, u.id]).catch(() => {});
+      await db.run('DELETE FROM images WHERE owner_id=?', [u.id]).catch(() => {});
       await db.run('DELETE FROM invites WHERE creator_id=?', [u.id]);
       await db.run('DELETE FROM topics WHERE user_id=?', [u.id]);
       await db.run('DELETE FROM blocks WHERE blocker_id=? OR blocked_id=?', [u.id, u.id]);

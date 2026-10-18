@@ -9,6 +9,28 @@ async function api(path, opts = {}) {
   if (!r.ok) { const e = new Error(data.error || 'Something went wrong.'); e.status = r.status; throw e; }
   return data;
 }
+// Upload raw image bytes (already resized/compressed on the device).
+async function upload(path, blob, method = 'POST') {
+  const r = await fetch('/api' + path, { method, headers: { 'Content-Type': blob.type || 'application/octet-stream', 'X-Requested-With': 'CoffeeBuds' }, body: blob });
+  const data = await r.json().catch(() => ({}));
+  if (!r.ok) throw new Error(data.error || 'Upload failed.');
+  return data;
+}
+// Resize + re-encode on the device: handles phone camera photos (incl. HEIC on iOS, which the browser decodes) and keeps uploads small.
+async function shrinkImage(file, max) {
+  if (!file || !/^image\//.test(file.type || 'image/')) throw new Error('Please choose a photo.');
+  let src;
+  try { src = await createImageBitmap(file, { imageOrientation: 'from-image' }); }
+  catch { src = await new Promise((res, rej) => { const im = new Image(); im.onload = () => res(im); im.onerror = () => rej(new Error("Couldn't read that photo.")); im.src = URL.createObjectURL(file); }); }
+  const w0 = src.width || src.naturalWidth, h0 = src.height || src.naturalHeight, k = Math.min(1, max / Math.max(w0, h0));
+  const c = document.createElement('canvas'); c.width = Math.round(w0 * k); c.height = Math.round(h0 * k);
+  c.getContext('2d').drawImage(src, 0, 0, c.width, c.height);
+  const enc = (type, q) => new Promise((res) => c.toBlob(res, type, q));
+  let blob = await enc('image/webp', 0.85);
+  if (!blob || blob.type !== 'image/webp') blob = await enc('image/jpeg', 0.85);
+  if (!blob) throw new Error("Couldn't process that photo.");
+  return blob;
+}
 function toast(msg) { const t = $('#toast'); t.textContent = msg; t.hidden = false; clearTimeout(toast.t); toast.t = setTimeout(() => (t.hidden = true), 2800); }
 const avatar = (u, cls = '') => u.photo_url ? `<img class="avatar ${cls}" src="${esc(u.photo_url)}" alt="" referrerpolicy="no-referrer" data-initial="${esc((u.name || '?')[0].toUpperCase())}">`
   : `<span class="avatar ${cls}">${esc((u.name || '?')[0].toUpperCase())}</span>`;
@@ -26,7 +48,7 @@ const setBadge = (n) => { const b = $('#badge'); b.hidden = !n; b.textContent = 
 async function refreshMe() { try { me = await api('/me'); setBadge(me.unread); } catch { me = null; } }
 
 // ---------- Router ----------
-const routes = { login: authView('login'), signup: authView('signup'), inbox, new: newMeetup, meetups, profile, notifications, invite: inviteDetail };
+const routes = { login: authView('login'), signup: authView('signup'), inbox, wall, new: newMeetup, meetups, profile, notifications, invite: inviteDetail };
 async function router() {
   const [, name = 'inbox', arg] = location.hash.split('/');
   if (!me && !['login', 'signup'].includes(name)) await refreshMe();
@@ -246,9 +268,11 @@ async function profile() {
   app.innerHTML = `<div class="pagehead"><h1>Your profile</h1><p style="margin:4px 0 0">Tell neighbors what you want to learn and what you can teach.</p></div>
   <div class="grid two" style="margin-top:16px;align-items:start">
    <form class="card" id="pf" novalidate><div id="perr"></div>
-     <div class="row" style="margin-bottom:16px">${avatar(me, 'lg')}<div><h3 style="margin:0">${esc(me.name)}</h3><div class="small muted">${esc(me.email)}</div></div></div>
+     <div class="row" style="margin-bottom:16px"><label class="avatar-upload" title="Change photo">${avatar(me, 'lg')}<span class="cam" aria-hidden="true">📷</span>
+       <input type="file" id="photoFile" accept="image/*" hidden aria-label="Upload profile photo"></label>
+       <div><h3 style="margin:0">${esc(me.name)}</h3><div class="small muted">${esc(me.email)}</div>
+       <div class="small" style="margin-top:4px"><a href="#" id="photoPick">${me.photo_url ? 'Change photo' : 'Add a photo'}</a>${me.photo_url ? ' · <a href="#" id="photoDel">Remove</a>' : ''} <span id="photoMsg" class="muted"></span></div></div></div>
      <div class="field"><label>Name</label><input id="name" maxlength="80" value="${esc(me.name)}"></div>
-     <div class="field"><label>Photo URL (optional)</label><input id="photo" maxlength="500" value="${esc(me.photo_url || '')}" placeholder="https://…"></div>
      <div class="field"><label>Home location</label><div class="row" style="flex-wrap:nowrap"><input id="loc" maxlength="200" value="${esc(me.location_label || '')}" placeholder="Address, neighborhood or city"><button type="button" class="btn ghost sm" id="geo">Find</button></div>
        <div id="geoRes" class="small" style="margin-top:6px"></div></div>
      <div class="grid two"><div class="field"><label>Latitude</label><input id="lat" inputmode="decimal" value="${me.lat ?? ''}"></div><div class="field"><label>Longitude</label><input id="lng" inputmode="decimal" value="${me.lng ?? ''}"></div></div>
@@ -260,6 +284,12 @@ async function profile() {
      <div id="tlist"></div><button class="btn caramel block" id="tsave" style="margin-top:16px">Save topics</button></div>
    <div class="card"><h3>Blocked people</h3><div id="blist" class="small muted">Loading…</div>
      <p class="small muted" style="margin-top:10px">Your exact home coordinates are never shown to others; we only use them (rounded to about 1 km) to match nearby invites.</p></div></div>`;
+  $('#photoPick').onclick = (e) => { e.preventDefault(); $('#photoFile').click(); };
+  $('#photoFile').onchange = async () => {
+    const f = $('#photoFile').files[0]; if (!f) return; $('#photoMsg').textContent = 'Uploading…';
+    try { me = await upload('/profile/photo', await shrinkImage(f, 512)); toast('Photo updated'); profile(); } catch (e) { $('#photoMsg').textContent = ''; toast(e.message); }
+  };
+  $('#photoDel')?.addEventListener('click', async (e) => { e.preventDefault(); try { me = await api('/profile/photo', { method: 'DELETE' }); toast('Photo removed'); profile(); } catch (err) { toast(err.message); } });
   const drawBlocks = async () => { const l = await api('/blocks').catch(() => []); const el = $('#blist'); if (!el) return;
     el.innerHTML = l.length ? l.map((b) => `<div class="row between" style="margin:6px 0"><span>${esc(b.name)}</span><button class="btn ghost sm" data-unblock="${b.id}">Unblock</button></div>`).join('') : 'Nobody — block someone from an invite page.';
     el.querySelectorAll('[data-unblock]').forEach((x) => (x.onclick = async () => { await api(`/users/${x.dataset.unblock}/block`, { method: 'DELETE' }).catch((e) => toast(e.message)); drawBlocks(); })); };
@@ -286,9 +316,62 @@ async function profile() {
   $('#gps').onclick = (e) => { e.preventDefault(); navigator.geolocation?.getCurrentPosition((p) => { $('#lat').value = p.coords.latitude.toFixed(5); $('#lng').value = p.coords.longitude.toFixed(5); }, () => toast('Could not get device location.')); };
   $('#pf').onsubmit = async (e) => {
     e.preventDefault();
-    try { me = await api('/profile', { method: 'PUT', body: { name: $('#name').value, photo_url: $('#photo').value.trim(), location_label: $('#loc').value, lat: $('#lat').value, lng: $('#lng').value } }); toast('Profile saved'); profile(); }
+    try { me = await api('/profile', { method: 'PUT', body: { name: $('#name').value, location_label: $('#loc').value, lat: $('#lat').value, lng: $('#lng').value } }); toast('Profile saved'); profile(); }
     catch (err) { $('#perr').innerHTML = `<div class="error">${esc(err.message)}</div>`; }
   };
+}
+
+// ---------- Photo wall ----------
+const ago = (ts) => { const d = (Date.now() - new Date(ts.replace(' ', 'T') + 'Z')) / 1000;
+  return d < 60 ? 'just now' : d < 3600 ? Math.floor(d / 60) + 'm ago' : d < 86400 ? Math.floor(d / 3600) + 'h ago' : d < 604800 ? Math.floor(d / 86400) + 'd ago' : fmtDate(ts.replace(' ', 'T') + 'Z'); };
+const postCard = (p) => `<figure class="post" data-post="${p.id}">
+  <img src="${esc(p.image_url)}" alt="${esc(p.caption || 'Coffee meetup photo')}" loading="lazy" ${p.width ? `width="${p.width}" height="${p.height}"` : ''}>
+  <figcaption>${p.caption ? `<p class="cap">${esc(p.caption)}</p>` : ''}
+    ${p.shop_name || p.invite_topic ? `<div class="tags">${p.invite_topic ? `<span class="pill status-pending">${esc(p.invite_topic)}</span>` : ''}${p.shop_name ? `<span class="small muted">☕ ${esc(p.shop_name)}</span>` : ''}</div>` : ''}
+    <div class="by">${avatar({ name: p.user_name, photo_url: p.user_photo })}<span class="small"><b>${esc(p.user_name)}</b> · <span class="muted">${ago(p.created_at)}</span></span>
+      ${p.mine ? `<button class="linkbtn" data-delpost="${p.id}">Delete</button>` : `<button class="linkbtn" data-reportpost="${p.id}">Report</button>`}</div></figcaption></figure>`;
+async function wall() {
+  let next = null, loading = false, blob = null, preview = null;
+  const [first, mine] = await Promise.all([api('/posts?limit=12'), api('/meetups').catch(() => ({ upcoming: [], past: [] }))]);
+  const meets = [...mine.past, ...mine.upcoming];
+  next = first.next_before;
+  app.innerHTML = `<div class="pagehead"><h1>Meetups</h1><p style="margin:4px 0 0">Little moments from coffee meetups around town.</p></div>
+  <form class="card composer" id="pf" novalidate><div id="perr"></div>
+    <div class="composer-grid"><label class="drop" id="drop"><input type="file" id="pfile" accept="image/*" hidden><span class="drop-empty"><span class="big">📷</span><b>Add a photo</b><span class="small muted">Camera or library</span></span></label>
+    <div class="stack" style="gap:10px"><div class="field" style="margin:0"><label for="cap">Caption <span class="muted small" id="capn">0/280</span></label><textarea id="cap" rows="3" maxlength="280" placeholder="Flat whites and a great chat about sourdough…"></textarea></div>
+      <div class="field" style="margin:0"><label for="plink">Link a meetup (optional)</label><select id="plink"><option value="">— None —</option>${meets.map((m) => `<option value="${m.id}">${esc(m.topic_label)} · ${esc(m.shop_name)} · ${new Date(m.starts_at).toLocaleDateString()}</option>`).join('')}</select></div>
+      <button class="btn caramel" id="pbtn" type="submit" disabled>Share photo</button></div></div></form>
+  <div class="wall" id="wall">${first.items.map(postCard).join('')}</div>
+  <div id="wallEnd">${first.items.length ? '' : empty('📸', 'No photos yet', 'Snap a picture at your next coffee meetup and be the first to share it.')}</div>`;
+  const pick = async () => { const f = $('#pfile').files[0]; if (!f) return;
+    try { $('#drop').classList.add('busy'); blob = await shrinkImage(f, 1600); if (preview) URL.revokeObjectURL(preview); preview = URL.createObjectURL(blob);
+      $('#drop').innerHTML = `<img src="${preview}" alt="Preview"><span class="change">Change</span>`; $('#drop').append($('#pfile') || Object.assign(document.createElement('input'), { type: 'file', id: 'pfile', accept: 'image/*', hidden: true }));
+      $('#pfile').onchange = pick; $('#pbtn').disabled = false; } catch (e) { toast(e.message); } finally { $('#drop').classList.remove('busy'); } };
+  $('#pfile').onchange = pick;
+  $('#cap').oninput = () => ($('#capn').textContent = $('#cap').value.length + '/280');
+  $('#pf').onsubmit = async (e) => {
+    e.preventDefault(); if (!blob) return toast('Add a photo first.');
+    $('#pbtn').disabled = true; $('#pbtn').textContent = 'Sharing…';
+    try { const up = await upload('/uploads', blob);
+      const post = await api('/posts', { method: 'POST', body: { image_id: up.id, caption: $('#cap').value, invite_id: $('#plink').value || null } });
+      toast('Shared ☕'); $('#wallEnd').innerHTML = ''; $('#wall').insertAdjacentHTML('afterbegin', postCard(post)); bindPosts();
+      blob = null; $('#cap').value = ''; $('#capn').textContent = '0/280'; $('#plink').value = '';
+      $('#drop').innerHTML = '<input type="file" id="pfile" accept="image/*" hidden><span class="drop-empty"><span class="big">📷</span><b>Add a photo</b><span class="small muted">Camera or library</span></span>'; $('#pfile').onchange = pick;
+    } catch (err) { $('#perr').innerHTML = `<div class="error">${esc(err.message)}</div>`; $('#pbtn').disabled = false; }
+    finally { $('#pbtn').textContent = 'Share photo'; }
+  };
+  function bindPosts() {
+    app.querySelectorAll('[data-delpost]').forEach((b) => (b.onclick = async () => { if (!confirm('Delete this photo?')) return;
+      try { await api('/posts/' + b.dataset.delpost, { method: 'DELETE' }); b.closest('.post').remove(); toast('Deleted.'); } catch (e) { toast(e.message); } }));
+    app.querySelectorAll('[data-reportpost]').forEach((b) => (b.onclick = async () => { const reason = prompt("What's wrong with this photo?"); if (reason == null) return;
+      if (!reason.trim()) return toast('Please describe the problem.');
+      try { await api(`/posts/${b.dataset.reportpost}/report`, { method: 'POST', body: { reason: reason.slice(0, 1000) } }); toast('Thanks — reported.'); } catch (e) { toast(e.message); } }));
+  }
+  bindPosts();
+  const more = async () => { if (loading || !next || !document.body.contains($('#wall'))) return; loading = true;
+    try { const r = await api(`/posts?limit=12&before=${next}`); next = r.next_before; $('#wall').insertAdjacentHTML('beforeend', r.items.map(postCard).join('')); bindPosts(); } catch (e) { toast(e.message); } finally { loading = false; } };
+  const sentinel = document.createElement('div'); sentinel.style.height = '1px'; $('#wallEnd').after(sentinel);
+  new IntersectionObserver((es, ob) => { if (!document.body.contains(sentinel)) return ob.disconnect(); if (es[0].isIntersecting) more(); }, { rootMargin: '600px' }).observe(sentinel);
 }
 
 // ---------- Notifications ----------
