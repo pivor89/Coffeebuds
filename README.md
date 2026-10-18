@@ -67,11 +67,13 @@ Free-license photos from [Pexels](https://www.pexels.com/license/) (Pexels Licen
 | Page | File | Photo |
 |---|---|---|
 | Login / sign up | `login.webp` | three friends of different backgrounds chatting and laughing over coffee at a bistro table outside a street café, by William Fortunato (Pexels): https://www.pexels.com/photo/6140394/ |
-| Invites inbox | `inbox.webp` | two friends laughing over coffee at a sidewalk café (Pexels): https://www.pexels.com/photo/5047023/ |
+| Invites inbox | `inbox.webp` | mixed group of friends laughing over coffee in a bright café, by RDNE Stock project (Pexels): https://www.pexels.com/photo/4920887/ |
 | New meetup | `new.webp` | people chatting at a Paris street café (Pexels): https://www.pexels.com/photo/24415132/ |
-| My meetups | `meetups.webp` | busy Parisian café terrace in summer (Pexels): https://www.pexels.com/photo/28179772/ |
-| Profile | `profile.webp` | two friends talking over coffee in a bright café (Pexels): https://www.pexels.com/photo/36765287/ |
-| Notifications | `notifications.webp` | two men talking over coffee on a café terrace (Pexels): https://www.pexels.com/photo/11284053/ |
+| My meetups | `meetups.webp` | diverse friends catching up over coffee in a cozy café, by RDNE Stock project (Pexels): https://www.pexels.com/photo/4921513/ |
+| Profile | `profile.webp` | two women of different backgrounds chatting over coffee in a bright café, by Alexander Suhorucov (Pexels): https://www.pexels.com/photo/6457519/ |
+| Notifications | `notifications.webp` | multiethnic friends chatting over coffee, by John Diez (Pexels): https://www.pexels.com/photo/7388884/ |
+| Photos (Meetups wall) | `wall.webp` | multicultural friends meeting over coffee in a café (Pexels): https://www.pexels.com/photo/8067743/ |
+| Admin | `admin.webp` | four women of diverse backgrounds chatting on a coffee break, by Yan Krukau (Pexels): https://www.pexels.com/photo/8837203/ |
 
 **Lounge** (`public/images/lounge/`)
 | Page | File | Photo |

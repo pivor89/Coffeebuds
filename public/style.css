@@ -175,6 +175,8 @@ html[data-theme=paris]{
   --t-meetups:url(/images/paris/meetups.webp);--t-meetups-b:url(/images/paris/meetups-blur.webp);
   --t-profile:url(/images/paris/profile.webp);--t-profile-b:url(/images/paris/profile-blur.webp);
   --t-notifications:url(/images/paris/notifications.webp);--t-notifications-b:url(/images/paris/notifications-blur.webp);
+  --t-wall:url(/images/paris/wall.webp);--t-wall-b:url(/images/paris/wall-blur.webp);
+  --t-admin:url(/images/paris/admin.webp);--t-admin-b:url(/images/paris/admin-blur.webp);
   --cream:#FBF7F0;--cream2:#F3EBDD;--espresso:#2E2620;--esp2:#6E6259;--caramel:#C69563;--car2:#9E6E3F;--white:#FFFEFB;--line:#EADFCF;--r:20px}
 html[data-theme=paris] h1,html[data-theme=paris] h2,html[data-theme=paris] h3,html[data-theme=paris] .brand{font-family:"Playfair Display",Georgia,serif;font-weight:600;letter-spacing:0}
 html[data-theme=paris] h1{font-style:italic;background:linear-gradient(90deg,#2E2620,#8A5E36);-webkit-background-clip:text;background-clip:text;color:transparent}
@@ -297,7 +299,7 @@ body{padding-left:env(safe-area-inset-left);padding-right:env(safe-area-inset-ri
 
 /* ---------- Photos (avatar upload + Meetups wall) ---------- */
 body.page-wall{--img:url(/images/meetups.webp);--blur:url(/images/meetups-blur.webp)}
-html[data-theme] body.page-wall{--img:var(--t-meetups);--blur:var(--t-meetups-b)}
+html[data-theme=paris] body.page-wall{--img:var(--t-wall);--blur:var(--t-wall-b)}
 .avatar-upload{position:relative;cursor:pointer;display:inline-block;border-radius:50%}
 .avatar-upload .cam{position:absolute;right:-2px;bottom:-2px;background:var(--white);border:1px solid var(--line);border-radius:50%;width:26px;height:26px;display:grid;place-items:center;font-size:13px;box-shadow:var(--shadow)}
 .avatar-upload:hover .avatar{filter:brightness(.92)}
@@ -320,7 +322,7 @@ html[data-theme] body.page-wall{--img:var(--t-meetups);--blur:var(--t-meetups-b)
 
 /* ---------- Admin / moderation ---------- */
 body.page-admin{--img:url(/images/notifications.webp);--blur:url(/images/notifications-blur.webp)}
-html[data-theme] body.page-admin{--img:var(--t-notifications);--blur:var(--t-notifications-b)}
+html[data-theme=paris] body.page-admin{--img:var(--t-admin);--blur:var(--t-admin-b)}
 .stats-grid{display:grid;grid-template-columns:repeat(6,1fr);gap:12px;margin-top:16px}
 .stat{text-align:center;padding:16px 8px}.stat .n{font-family:'Playfair Display','Cormorant Garamond',serif;font-size:30px;font-weight:600;line-height:1.1}
 .report{display:grid;grid-template-columns:120px 1fr;gap:16px;align-items:start}
