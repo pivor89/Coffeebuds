@@ -55,6 +55,17 @@ const SAFETY = `<div class="card safety"><h3>☕ Safety tips</h3><ul class="smal
   <li>Meet only in public coffee shops — never at someone's home.</li><li>Tell a friend where you're going and when.</li>
   <li>Keep personal details (address, phone, finances) private until you trust someone.</li><li>Arrange your own transport and leave if you feel uncomfortable.</li>
   <li>Block or report anyone who makes you feel unsafe — reports are reviewed.</li></ul></div>`;
+// Polished 1-15 mile range slider with a live value label. bindRange() keeps the label + filled track in sync.
+const RADIUS_MAX = 15;
+const miles = (n) => `${n} ${+n === 1 ? 'mile' : 'miles'}`;
+const rangeField = (id, value, label) => `<div class="field range-field"><label for="${id}">${label.replace('__', `<output class="range-val" id="${id}Val" for="${id}">${esc(miles(value))}</output>`)}</label>
+  <input type="range" class="range" id="${id}" min="1" max="${RADIUS_MAX}" step="1" value="${value}" aria-valuetext="${esc(miles(value))}">
+  <div class="range-scale small muted" aria-hidden="true"><span>1 mi</span><span>${RADIUS_MAX} mi</span></div></div>`;
+function bindRange(id, onChange) {
+  const el = $('#' + id), out = $('#' + id + 'Val');
+  const sync = () => { const v = +el.value; out.textContent = miles(v); el.setAttribute('aria-valuetext', miles(v)); el.style.setProperty('--pct', ((v - 1) / (RADIUS_MAX - 1)) * 100 + '%'); onChange?.(v); };
+  el.addEventListener('input', sync); sync(); return () => +el.value;
+}
 const roleBadge = (r) => r === 'learn' ? '<span class="pill learn">📖 Learn</span>' : '<span class="pill teach">🎓 Teach</span>';
 const fmtDate = (iso) => new Date(iso).toLocaleString([], { weekday: 'short', month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' });
 const empty = (icon, title, text, cta = '') => `<div class="card empty"><div class="icon">${icon}</div><h3>${title}</h3><p class="muted">${text}</p>${cta}</div>`;
@@ -91,8 +102,8 @@ function authView(mode) {
     app.innerHTML = `<div class="auth">
       <section class="hero"><svg class="art" viewBox="0 0 200 200" aria-hidden="true"><g class="steam" fill="none" stroke="#F7F1E8" stroke-width="5" stroke-linecap="round" opacity=".7"><path d="M78 52c-10-12 10-18 0-32"/><path d="M100 50c-10-12 10-18 0-32"/><path d="M122 52c-10-12 10-18 0-32"/></g><ellipse cx="100" cy="172" rx="78" ry="12" fill="#000" opacity=".18"/><path d="M38 70h124l-12 86a18 18 0 0 1-18 16H68a18 18 0 0 1-18-16z" fill="#F7F1E8"/><path d="M162 86h8a22 22 0 0 1 0 44h-12l2-12h10a10 10 0 0 0 0-20h-10z" fill="#F7F1E8"/><ellipse cx="100" cy="70" rx="62" ry="10" fill="#C8894B"/><ellipse cx="100" cy="70" rx="48" ry="6" fill="#8A5A30"/><path d="M58 108h84" stroke="#C8894B" stroke-width="6" stroke-linecap="round" opacity=".6"/></svg><div><div class="brand" style="color:var(--cream)">☕ CoffeeBuds</div></div>
         <div><h1>Learn something new,<br><em>one cup at a time.</em></h1>
-        <p style="max-width:420px;opacity:.85">Meet neighbors over coffee to swap skills — from AI to cake decorating to career advice. Ask to learn, offer to teach, and we'll invite the right people within 15 miles.</p>
-        <div class="feats"><span>📖 Learn</span><span>🎓 Teach</span><span>📍 15-mile matching</span></div></div><p class="foot small" style="opacity:.6">Tampa Bay · made with espresso</p></section>
+        <p style="max-width:420px;opacity:.85">Meet neighbors over coffee to swap skills — from AI to cake decorating to career advice. Ask to learn, offer to teach, and we'll invite the right people within up to 15 miles.</p>
+        <div class="feats"><span>📖 Learn</span><span>🎓 Teach</span><span>📍 Matching within up to 15 miles</span></div></div><p class="foot small" style="opacity:.6">Tampa Bay · made with espresso</p></section>
       <section class="panel"><form class="card" id="f" novalidate>
         <h2>${isUp ? 'Create your account' : 'Welcome back'}</h2>
         <p class="muted small" style="margin-top:-4px">${isUp ? 'Takes 30 seconds.' : 'Log in to see your invites.'}</p>
@@ -122,7 +133,7 @@ function inviteCard(i, { actions = true } = {}) {
     <div><div class="row" style="gap:8px">${roleBadge(i.role)}${st && st !== 'host' ? `<span class="pill status-${st}">${st}</span>` : ''}${i.relation ? `<span class="pill status-pending">${i.relation === 'host' ? 'Hosting' : 'Attending'}</span>` : ''}</div>
       <h3 style="margin:8px 0 0"><a href="#/invite/${i.id}" style="color:inherit;text-decoration:none">${esc(i.topic_label)}</a></h3>
       <div class="small muted">${esc(i.creator_name)} ${i.role === 'learn' ? 'wants to learn this' : 'can teach this'}</div>
-      <div class="meta"><span>☕ ${esc(i.shop_name)}</span><span>🗓 ${fmtDate(i.starts_at)}</span>${i.distance_mi != null ? `<span>📍 ${i.distance_mi} mi from you</span>` : ''}<span>👥 ${i.accepted_count}/${i.max_attendees} going</span></div>
+      <div class="meta"><span>☕ ${esc(i.shop_name)}</span><span>🗓 ${fmtDate(i.starts_at)}</span>${i.distance_mi != null ? `<span>📍 ${i.distance_mi} mi from you</span>` : ''}${(st === 'host' || i.relation === 'host') && i.radius_mi ? `<span>🎯 Within ${i.radius_mi} mi</span>` : ''}<span>👥 ${i.accepted_count}/${i.max_attendees} going</span></div>
       ${i.note ? `<div class="note">“${esc(i.note)}”</div>` : ''}
       ${i.going?.length ? `<div class="row small muted" style="margin-top:10px"><div class="avatars">${i.going.slice(0, 5).map((g) => avatar(g)).join('')}</div>${i.going.map((g) => esc(g.name.split(' ')[0])).join(', ')} going</div>` : ''}
     </div>
@@ -159,7 +170,7 @@ async function inviteDetail(id) {
   const i = await api('/invites/' + id);
   app.innerHTML = `<a href="#/inbox" class="small">← Back</a><div class="stack" style="margin-top:12px">${inviteCard(i)}
     <div class="card"><h3>Where</h3><p class="muted">${esc(i.shop_name)}${i.shop_address ? ' · ' + esc(i.shop_address) : ''}</p><div class="map" id="dmap"></div>
-    ${i.my_status === 'host' ? `<p class="small muted" style="margin-top:12px">Invited ${i.counts.total} · ${i.going.length} going · ${i.counts.declined || 0} declined · ${i.counts.pending || 0} pending</p>` : ''}</div>
+    ${i.my_status === 'host' ? `<p class="small muted" style="margin-top:12px">Invited ${i.counts.total} within ${esc(miles(i.radius_mi ?? RADIUS_MAX))} · ${i.going.length} going · ${i.counts.declined || 0} declined · ${i.counts.pending || 0} pending</p>` : ''}</div>
     ${i.creator_id !== me.id ? `<div class="card"><h3>Hosted by ${esc(i.creator_name)}</h3><p class="small muted">Something off? Blocking hides you from each other; reports go to the CoffeeBuds team.</p>
       <div class="row" style="gap:8px"><button class="btn ghost sm" id="block">Block ${esc(i.creator_name.split(' ')[0])}</button><button class="btn ghost sm" id="report">Report</button></div></div>` : ''}
     ${SAFETY}</div>`;
@@ -184,7 +195,7 @@ async function newMeetup() {
   const popular = await api('/topics/popular').catch(() => []);
   const def = new Date(Date.now() + 2 * 864e5); def.setHours(9, 0, 0, 0);
   const local = new Date(def - def.getTimezoneOffset() * 6e4).toISOString().slice(0, 16);
-  app.innerHTML = `<div class="pagehead"><h1>Start a coffee meetup</h1><p class="muted" style="margin:-6px 0 0">We'll invite everyone within 15 miles of the shop with the opposite role on your topic.</p></div>
+  app.innerHTML = `<div class="pagehead"><h1>Start a coffee meetup</h1><p class="muted" style="margin:-6px 0 0">We'll invite everyone within <b id="radiusHead">15 miles</b> of the shop with the opposite role on your topic.</p></div>
   <form id="f" class="stack" novalidate style="margin-top:20px"><div id="err"></div>
    <div class="card"><h3>1 · What kind of meetup?</h3>
      <div class="seg" id="roleSeg"><button type="button" data-v="learn" class="on">📖 I want to learn</button><button type="button" data-v="teach">🎓 I can teach</button></div>
@@ -201,12 +212,16 @@ async function newMeetup() {
        <div class="field"><label>Address</label><div class="row" style="flex-wrap:nowrap"><input id="mAddr" placeholder="123 Main St, Tampa"><button type="button" class="btn ghost sm" id="mGeo">Locate</button></div></div>
        <div class="field"><label>Latitude</label><input id="mLat" inputmode="decimal"></div><div class="field"><label>Longitude</label><input id="mLng" inputmode="decimal"></div></div>
        <p class="small muted">Tip: click the map to drop a pin, or use “Locate”. <button type="button" class="btn sm" id="mUse">Use this shop</button></p></details>
-     <p id="chosen" class="small" style="margin-top:10px"></p></div>
+     <p id="chosen" class="small" style="margin-top:10px"></p>
+     <div class="radius-box">${rangeField('radius', RADIUS_MAX, 'Invite people within __')}
+       <p class="small muted" id="radiusHint" style="margin:6px 0 0"></p></div></div>
    <div class="card"><h3>3 · When &amp; details</h3><div class="grid two">
      <div class="field"><label for="when">Date &amp; time</label><input id="when" type="datetime-local" value="${local}"></div>
      <div class="field"><label for="max">Max attendees</label><input id="max" type="number" min="1" max="50" value="4"></div></div>
      <div class="field"><label for="note">Note (optional)</label><textarea id="note" rows="3" maxlength="500" placeholder="I'll grab a table by the window — beginners welcome!"></textarea></div>
      <button class="btn caramel" type="submit">Send invites</button></div>${SAFETY}</form>`;
+  const radius = bindRange('radius', (v) => { $('#radiusHead').textContent = miles(v);
+    $('#radiusHint').textContent = `Only people within ${miles(v)} of the shop (who also allow that distance) will be invited.`; });
   const hint = () => ($('#hint').textContent = role === 'learn' ? 'Invites go to nearby people who can teach this topic.' : 'Invites go to nearby people who want to learn this topic.');
   hint();
   $('#roleSeg').querySelectorAll('button').forEach((b) => (b.onclick = () => { role = b.dataset.v; $('#roleSeg').querySelectorAll('button').forEach((x) => x.classList.toggle('on', x === b)); hint(); }));
@@ -262,9 +277,9 @@ async function newMeetup() {
     if (!$('#when').value) errs.push('Choose a date and time.');
     if (errs.length) { $('#err').innerHTML = `<div class="error">${errs.join('<br>')}</div>`; scrollTo({ top: 0, behavior: 'smooth' }); return; }
     try {
-      const r = await api('/invites', { method: 'POST', body: { role, topic: $('#topic').value, starts_at: new Date($('#when').value).toISOString(), note: $('#note').value, max_attendees: $('#max').value,
+      const r = await api('/invites', { method: 'POST', body: { role, topic: $('#topic').value, starts_at: new Date($('#when').value).toISOString(), note: $('#note').value, max_attendees: $('#max').value, radius_mi: radius(),
         shop: shop.id ? { id: shop.id } : { name: shop.name, address: shop.address, lat: shop.lat, lng: shop.lng, osm_id: shop.osm_id } } });
-      toast(r.recipients ? `Invite sent to ${r.recipients} ${r.recipients === 1 ? 'person' : 'people'} nearby ☕` : 'Meetup created — no matches nearby yet.');
+      toast(r.recipients ? `Invite sent to ${r.recipients} ${r.recipients === 1 ? 'person' : 'people'} within ${miles(r.radius_mi)} ☕` : `Meetup created — no matches within ${miles(r.radius_mi)} yet.`);
       location.hash = '#/meetups';
     } catch (err) { $('#err').innerHTML = `<div class="error">${esc(err.message)}</div>`; scrollTo({ top: 0, behavior: 'smooth' }); }
   };
@@ -295,6 +310,8 @@ async function profile() {
        <div id="geoRes" class="small" style="margin-top:6px"></div></div>
      <div class="grid two"><div class="field"><label>Latitude</label><input id="lat" inputmode="decimal" value="${me.lat ?? ''}"></div><div class="field"><label>Longitude</label><input id="lng" inputmode="decimal" value="${me.lng ?? ''}"></div></div>
      <p class="small muted" style="margin-top:-6px">Geocoding uses OpenStreetMap. If it's unavailable, enter coordinates manually. <a href="#" id="gps">Use my device location</a></p>
+     <div class="radius-box" style="margin-bottom:16px">${rangeField('maxDist', me.max_distance_mi ?? RADIUS_MAX, 'Only invite me to meetups within __')}
+       <p class="small muted" style="margin:6px 0 0">Measured from the coffee shop to your home location. Hosts choose their own radius too — you're only invited when you're inside both.</p></div>
      <div class="row between"><button class="btn" type="submit">Save profile</button><button type="button" class="btn ghost sm" data-logout>Sign out</button></div>
      <div class="install-card"><div><b>CoffeeBuds on your phone</b><div class="small muted">Add it to your home screen for one-tap coffee plans.</div></div>${installControl('button')}</div></form>
    <div class="card"><h3>Your topics</h3><p class="small muted">Free text is fine — we match case-insensitively.</p>
@@ -304,6 +321,7 @@ async function profile() {
    <div class="card"><h3>Blocked people</h3><div id="blist" class="small muted">Loading…</div>
      <p class="small muted" style="margin-top:10px">Your exact home coordinates are never shown to others; we only use them (rounded to about 1 km) to match nearby invites.</p></div></div>`;
   bindInstall(app);
+  const maxDist = bindRange('maxDist');
   $('#photoPick').onclick = (e) => { e.preventDefault(); $('#photoFile').click(); };
   $('#photoFile').onchange = async () => {
     const f = $('#photoFile').files[0]; if (!f) return; $('#photoMsg').textContent = 'Uploading…';
@@ -336,7 +354,7 @@ async function profile() {
   $('#gps').onclick = (e) => { e.preventDefault(); navigator.geolocation?.getCurrentPosition((p) => { $('#lat').value = p.coords.latitude.toFixed(5); $('#lng').value = p.coords.longitude.toFixed(5); }, () => toast('Could not get device location.')); };
   $('#pf').onsubmit = async (e) => {
     e.preventDefault();
-    try { me = await api('/profile', { method: 'PUT', body: { name: $('#name').value, location_label: $('#loc').value, lat: $('#lat').value, lng: $('#lng').value } }); toast('Profile saved'); profile(); }
+    try { me = await api('/profile', { method: 'PUT', body: { name: $('#name').value, location_label: $('#loc').value, lat: $('#lat').value, lng: $('#lng').value, max_distance_mi: maxDist() } }); toast('Profile saved'); profile(); }
     catch (err) { $('#perr').innerHTML = `<div class="error">${esc(err.message)}</div>`; }
   };
 }

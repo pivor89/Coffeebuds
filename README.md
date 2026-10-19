@@ -1,6 +1,6 @@
 # ☕ CoffeeBuds
 
-Meet people nearby over coffee to learn together. Say you want to learn something, or offer to teach it, and CoffeeBuds invites everyone within 15 miles of the coffee shop who has the opposite role on that topic.
+Meet people nearby over coffee to learn together. Say you want to learn something, or offer to teach it, and CoffeeBuds invites everyone within the host's chosen radius (1–15 miles, default 15) of the coffee shop who has the opposite role on that topic.
 
 ## Stack
 Node.js (>=18) + Express 5 · **Postgres** (via `pg`, e.g. a free [Neon](https://neon.tech) database) when `DATABASE_URL` is set, otherwise SQLite through **sql.js** (WASM, so there's nothing native to build; the database is saved to `data/coffeebuds.sqlite`) · bcryptjs password hashing · express-session cookies · vanilla JS SPA · Leaflet + OpenStreetMap (Nominatim geocoding, Overpass café search with a Nominatim fallback) · Inter + Fraunces.
@@ -18,7 +18,7 @@ On first start the app seeds 8 users around Tampa, FL, plus 4 coffee shops.
 To reset, delete `data/coffeebuds.sqlite` (SQLite mode) or drop the tables (Postgres mode). Seeding runs only when the `users` table is empty, so restarts never duplicate or overwrite real data.
 
 ## Matching rule
-`src/matching.js` → `findRecipients()`: candidates are users who have a home lat/lng and whose normalized topic (lowercased, trimmed, spaces collapsed) equals the invite's topic with the **opposite** role (learn ↔ teach). The creator is excluded. A candidate is invited if their haversine distance **from the coffee shop** is ≤ 15 miles.
+`src/matching.js` → `findRecipients()`: candidates are users who have a home lat/lng and whose normalized topic (lowercased, trimmed, spaces collapsed) equals the invite's topic with the **opposite** role (learn ↔ teach). The creator is excluded. A candidate is invited if their haversine distance **from the coffee shop** is ≤ min(the invite's `radius_mi`, the candidate's `max_distance_mi`). Both are integers 1–15 (default 15): hosts pick the radius with a slider on the invite form, and each user can cap it in their profile ("Only invite me to meetups within N miles"). The server clamps both to 1–15.
 
 ## Env vars
 `PORT`, `SESSION_SECRET` (required in prod), `DATABASE_URL`, `DB_PATH`, `NODE_ENV=production` (secure cookies), `OVERPASS_URL`, `PG_POOL_MAX` (default 5).

@@ -8,7 +8,7 @@ const db = require('./src/db');
 const { seed, removeDemoAccounts, coarsenHomeLocations, deleteUserCascade } = require('./src/seed');
 const stats = require('./src/stats');
 const images = require('./src/images');
-const { findRecipients, normalizeTopic, haversineMiles, MATCH_RADIUS_MI } = require('./src/matching');
+const { findRecipients, normalizeTopic, haversineMiles, clampRadius, MATCH_RADIUS_MI } = require('./src/matching');
 
 const app = express();
 const PORT = Number(process.env.PORT) || 3000;
@@ -102,7 +102,7 @@ const BCRYPT_COST = 12;
 const DUMMY_HASH = bcrypt.hashSync('timing-equalizer-not-a-password', BCRYPT_COST);
 const str = (v, max) => String(v ?? '').trim().slice(0, max);
 const isId = (v) => /^\d{1,10}$/.test(String(v));
-// Home locations are stored rounded to 2 decimals (~1 km) so even a DB leak never reveals an exact address; plenty for 15-mile matching.
+// Home locations are stored rounded to 2 decimals (~1 km) so even a DB leak never reveals an exact address; plenty for 1-15 mile matching.
 const coarse = (n) => Math.round(Number(n) * 100) / 100;
 const blockedWith = (me) => db.all('SELECT blocked_id AS id FROM blocks WHERE blocker_id=? UNION SELECT blocker_id AS id FROM blocks WHERE blocked_id=?', [me, me])
   .then((r) => new Set(r.map((x) => x.id)));
@@ -120,7 +120,7 @@ const isNum = (v) => v !== '' && v != null && !isNaN(Number(v));
 const validLatLng = (lat, lng) => isNum(lat) && isNum(lng) && Math.abs(lat) <= 90 && Math.abs(lng) <= 180;
 
 async function userPayload(id) {
-  const u = await db.get('SELECT id,email,name,photo_url,location_label,lat,lng FROM users WHERE id=?', [id]);
+  const u = await db.get('SELECT id,email,name,photo_url,location_label,lat,lng,max_distance_mi FROM users WHERE id=?', [id]);
   if (!u) return null;
   u.is_admin = isAdminEmail(u.email);
   u.topics = await db.all('SELECT topic,label,role FROM topics WHERE user_id=? ORDER BY role,label', [id]);
@@ -162,14 +162,17 @@ app.get('/api/me', auth, async (req, res) => res.json(await userPayload(req.sess
 
 // ---------- Profile ----------
 app.put('/api/profile', auth, async (req, res) => {
-  const { name, location_label, lat, lng } = req.body || {};
+  const { name, location_label, lat, lng, max_distance_mi } = req.body || {};
   if (typeof name !== 'string' || !name.trim()) return bad(res, 'Name is required.');
   if (name.trim().length > 80) return bad(res, 'Name must be 80 characters or fewer.');
   if (location_label != null && String(location_label).length > 200) return bad(res, 'Location must be 200 characters or fewer.');
   const hasLoc = isNum(lat) || isNum(lng);
   if (hasLoc && !validLatLng(lat, lng)) return bad(res, 'Latitude/longitude are invalid.');
-  await db.run('UPDATE users SET name=?,location_label=?,lat=?,lng=? WHERE id=?',
-    [name.trim(), str(location_label, 200) || null, hasLoc ? coarse(lat) : null, hasLoc ? coarse(lng) : null, req.session.userId]);
+  // Optional: "Only invite me to meetups within N miles" (integer 1-15). Omitted -> keep the current value.
+  const maxDist = max_distance_mi == null || max_distance_mi === '' ? null : clampRadius(max_distance_mi);
+  if (max_distance_mi != null && max_distance_mi !== '' && maxDist == null) return bad(res, 'Distance must be a number of miles between 1 and 15.');
+  await db.run('UPDATE users SET name=?,location_label=?,lat=?,lng=?,max_distance_mi=COALESCE(?,max_distance_mi) WHERE id=?',
+    [name.trim(), str(location_label, 200) || null, hasLoc ? coarse(lat) : null, hasLoc ? coarse(lng) : null, maxDist, req.session.userId]);
   res.json(await userPayload(req.session.userId));
 });
 // Profile photo: client sends the (already resized) image bytes; we sniff, re-encode to 512px WebP without metadata and store it.
@@ -303,22 +306,24 @@ app.post('/api/invites', auth, inviteLimiter, async (req, res) => {
   if (when > Date.now() + 366 * 864e5) return bad(res, 'Meetup must be within the next year.');
   const max = parseInt(b.max_attendees ?? 4, 10);
   if (!(max >= 1 && max <= 50)) return bad(res, 'Max attendees must be between 1 and 50.');
+  const radius = clampRadius(b.radius_mi); // integer 1-15, default 15
+  if (radius == null) return bad(res, 'Invite radius must be a number of miles between 1 and 15.');
   try {
     const result = await db.tx(async () => {
       const shop = await resolveShop(b, me);
-      const id = await db.run('INSERT INTO invites(creator_id,shop_id,role,topic,topic_label,starts_at,note,max_attendees) VALUES (?,?,?,?,?,?,?,?)',
-        [me, shop.id, b.role, topic, topicLabel, when.toISOString(), String(b.note || '').slice(0, 500) || null, max]);
-      const users = await db.all('SELECT id,lat,lng FROM users WHERE lat IS NOT NULL AND suspended_at IS NULL');
+      const id = await db.run('INSERT INTO invites(creator_id,shop_id,role,topic,topic_label,starts_at,note,max_attendees,radius_mi) VALUES (?,?,?,?,?,?,?,?,?)',
+        [me, shop.id, b.role, topic, topicLabel, when.toISOString(), String(b.note || '').slice(0, 500) || null, max, radius]);
+      const users = await db.all('SELECT id,lat,lng,max_distance_mi FROM users WHERE lat IS NOT NULL AND suspended_at IS NULL');
       const topics = await db.all('SELECT user_id,topic,role FROM topics WHERE topic=?', [topic]);
       users.forEach((u) => (u.topics = topics.filter((t) => t.user_id === u.id)));
       const blocked = await blockedWith(me);
-      const recips = findRecipients(users.filter((u) => !blocked.has(u.id)), shop, { creatorId: me, role: b.role, topic });
+      const recips = findRecipients(users.filter((u) => !blocked.has(u.id)), shop, { creatorId: me, role: b.role, topic }, radius);
       const creator = await db.get('SELECT name FROM users WHERE id=?', [me]);
       for (const r of recips) {
         await db.run('INSERT INTO invite_recipients(invite_id,user_id,distance_mi) VALUES (?,?,?)', [id, r.userId, r.distance]);
         await notify(r.userId, 'invite', `${creator.name} ${b.role === 'learn' ? 'wants to learn' : 'can teach'} ${topicLabel} at ${shop.name}`, id);
       }
-      return { id, recipients: recips.length };
+      return { id, recipients: recips.length, radius_mi: radius };
     });
     res.status(201).json(result);
   } catch (e) { if (!e.user) { console.error(e); return bad(res, 'Could not create the invite.', 500); } bad(res, e.message); }

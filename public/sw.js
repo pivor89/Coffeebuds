@@ -1,5 +1,5 @@
 /* CoffeeBuds service worker. Bump VERSION to invalidate old caches. */
-const VERSION = 'v1.3.2';
+const VERSION = 'v1.3.3';
 const CACHE = 'coffeebuds-' + VERSION;
 const SHELL = ['/', '/index.html', '/style.css', '/app.js', '/pwa.js', '/theme.js', '/offline.html', '/offline.js', '/manifest.webmanifest',
   '/icons/icon-192.png', '/icons/icon-512.png', '/icons/apple-touch-icon.png', '/icons/favicon-32.png'];

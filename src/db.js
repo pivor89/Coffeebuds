@@ -13,13 +13,14 @@ const txStore = new AsyncLocalStorage();
 
 const SQLITE_SCHEMA = `
 CREATE TABLE IF NOT EXISTS users (id INTEGER PRIMARY KEY, email TEXT UNIQUE NOT NULL, password_hash TEXT NOT NULL,
-  name TEXT NOT NULL, photo_url TEXT, location_label TEXT, lat REAL, lng REAL, created_at TEXT DEFAULT CURRENT_TIMESTAMP);
+  name TEXT NOT NULL, photo_url TEXT, location_label TEXT, lat REAL, lng REAL, created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+  max_distance_mi INTEGER NOT NULL DEFAULT 15);
 CREATE TABLE IF NOT EXISTS topics (id INTEGER PRIMARY KEY, user_id INTEGER NOT NULL, topic TEXT NOT NULL, label TEXT NOT NULL,
   role TEXT NOT NULL CHECK(role IN ('learn','teach')), UNIQUE(user_id, topic, role));
 CREATE TABLE IF NOT EXISTS shops (id INTEGER PRIMARY KEY, name TEXT NOT NULL, address TEXT, lat REAL NOT NULL, lng REAL NOT NULL, osm_id TEXT UNIQUE);
 CREATE TABLE IF NOT EXISTS invites (id INTEGER PRIMARY KEY, creator_id INTEGER NOT NULL, shop_id INTEGER NOT NULL,
   role TEXT NOT NULL CHECK(role IN ('learn','teach')), topic TEXT NOT NULL, topic_label TEXT NOT NULL, starts_at TEXT NOT NULL,
-  note TEXT, max_attendees INTEGER NOT NULL DEFAULT 4, created_at TEXT DEFAULT CURRENT_TIMESTAMP);
+  note TEXT, max_attendees INTEGER NOT NULL DEFAULT 4, created_at TEXT DEFAULT CURRENT_TIMESTAMP, radius_mi INTEGER NOT NULL DEFAULT 15);
 CREATE TABLE IF NOT EXISTS invite_recipients (invite_id INTEGER NOT NULL, user_id INTEGER NOT NULL, distance_mi REAL,
   status TEXT NOT NULL DEFAULT 'pending', responded_at TEXT, PRIMARY KEY(invite_id, user_id));
 CREATE TABLE IF NOT EXISTS notifications (id INTEGER PRIMARY KEY, user_id INTEGER NOT NULL, type TEXT NOT NULL, message TEXT NOT NULL,
@@ -37,13 +38,14 @@ CREATE TABLE IF NOT EXISTS posts (id INTEGER PRIMARY KEY, user_id INTEGER NOT NU
 const PG_NOW = `to_char(now() AT TIME ZONE 'UTC', 'YYYY-MM-DD HH24:MI:SS')`;
 const PG_SCHEMA = `
 CREATE TABLE IF NOT EXISTS users (id SERIAL PRIMARY KEY, email TEXT UNIQUE NOT NULL, password_hash TEXT NOT NULL,
-  name TEXT NOT NULL, photo_url TEXT, location_label TEXT, lat DOUBLE PRECISION, lng DOUBLE PRECISION, created_at TEXT DEFAULT ${PG_NOW});
+  name TEXT NOT NULL, photo_url TEXT, location_label TEXT, lat DOUBLE PRECISION, lng DOUBLE PRECISION, created_at TEXT DEFAULT ${PG_NOW},
+  max_distance_mi INTEGER NOT NULL DEFAULT 15);
 CREATE TABLE IF NOT EXISTS topics (id SERIAL PRIMARY KEY, user_id INTEGER NOT NULL, topic TEXT NOT NULL, label TEXT NOT NULL,
   role TEXT NOT NULL CHECK(role IN ('learn','teach')), UNIQUE(user_id, topic, role));
 CREATE TABLE IF NOT EXISTS shops (id SERIAL PRIMARY KEY, name TEXT NOT NULL, address TEXT, lat DOUBLE PRECISION NOT NULL, lng DOUBLE PRECISION NOT NULL, osm_id TEXT UNIQUE);
 CREATE TABLE IF NOT EXISTS invites (id SERIAL PRIMARY KEY, creator_id INTEGER NOT NULL, shop_id INTEGER NOT NULL,
   role TEXT NOT NULL CHECK(role IN ('learn','teach')), topic TEXT NOT NULL, topic_label TEXT NOT NULL, starts_at TEXT NOT NULL,
-  note TEXT, max_attendees INTEGER NOT NULL DEFAULT 4, created_at TEXT DEFAULT ${PG_NOW});
+  note TEXT, max_attendees INTEGER NOT NULL DEFAULT 4, created_at TEXT DEFAULT ${PG_NOW}, radius_mi INTEGER NOT NULL DEFAULT 15);
 CREATE TABLE IF NOT EXISTS invite_recipients (invite_id INTEGER NOT NULL, user_id INTEGER NOT NULL, distance_mi DOUBLE PRECISION,
   status TEXT NOT NULL DEFAULT 'pending', responded_at TEXT, PRIMARY KEY(invite_id, user_id));
 CREATE TABLE IF NOT EXISTS notifications (id SERIAL PRIMARY KEY, user_id INTEGER NOT NULL, type TEXT NOT NULL, message TEXT NOT NULL,
@@ -65,6 +67,9 @@ ALTER TABLE reports ADD COLUMN IF NOT EXISTS post_id INTEGER;
 ALTER TABLE users ADD COLUMN IF NOT EXISTS suspended_at TEXT;
 ALTER TABLE posts ADD COLUMN IF NOT EXISTS hidden_at TEXT;
 ALTER TABLE posts ADD COLUMN IF NOT EXISTS hidden_reason TEXT;
+-- Adjustable match radius (1-15 mi). Constant defaults backfill existing rows with 15 (the previous fixed radius).
+ALTER TABLE invites ADD COLUMN IF NOT EXISTS radius_mi INTEGER NOT NULL DEFAULT 15;
+ALTER TABLE users ADD COLUMN IF NOT EXISTS max_distance_mi INTEGER NOT NULL DEFAULT 15;
 CREATE TABLE IF NOT EXISTS admin_actions (id SERIAL PRIMARY KEY, actor TEXT NOT NULL, action TEXT NOT NULL, target_type TEXT NOT NULL, target_id INTEGER, reason TEXT, created_at TEXT DEFAULT ${PG_NOW});
 `;
 
@@ -81,7 +86,8 @@ const sqlite = {
       CREATE INDEX IF NOT EXISTS idx_invites_creator ON invites(creator_id);
       CREATE INDEX IF NOT EXISTS idx_recipients_user ON invite_recipients(user_id);
       CREATE INDEX IF NOT EXISTS idx_notifications_user ON notifications(user_id, is_read);`);
-    for (const q of ['ALTER TABLE reports ADD COLUMN post_id INTEGER', 'ALTER TABLE users ADD COLUMN suspended_at TEXT', 'ALTER TABLE posts ADD COLUMN hidden_at TEXT', 'ALTER TABLE posts ADD COLUMN hidden_reason TEXT']) {
+    for (const q of ['ALTER TABLE reports ADD COLUMN post_id INTEGER', 'ALTER TABLE users ADD COLUMN suspended_at TEXT', 'ALTER TABLE posts ADD COLUMN hidden_at TEXT', 'ALTER TABLE posts ADD COLUMN hidden_reason TEXT',
+      'ALTER TABLE invites ADD COLUMN radius_mi INTEGER NOT NULL DEFAULT 15', 'ALTER TABLE users ADD COLUMN max_distance_mi INTEGER NOT NULL DEFAULT 15']) {
       try { sdb.exec(q); } catch { /* column already there */ }
     }
     sdb.exec('CREATE TABLE IF NOT EXISTS admin_actions (id INTEGER PRIMARY KEY, actor TEXT NOT NULL, action TEXT NOT NULL, target_type TEXT NOT NULL, target_id INTEGER, reason TEXT, created_at TEXT DEFAULT CURRENT_TIMESTAMP)');
