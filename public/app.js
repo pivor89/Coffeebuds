@@ -70,7 +70,11 @@ const roleBadge = (r) => r === 'learn' ? '<span class="pill learn">📖 Learn</s
 const fmtDate = (iso) => new Date(iso).toLocaleString([], { weekday: 'short', month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' });
 const empty = (icon, title, text, cta = '') => `<div class="card empty"><div class="icon">${icon}</div><h3>${title}</h3><p class="muted">${text}</p>${cta}</div>`;
 const setBadge = (n) => { const b = $('#badge'); b.hidden = !n; b.textContent = n > 9 ? '9+' : n; };
-async function refreshMe() { try { me = await api('/me'); setBadge(me.unread); } catch { me = null; } }
+async function refreshMe() { try { me = await api('/me'); setBadge(me.unread); markReturning(); } catch { me = null; } }
+// First-time visitors land on sign-up; anyone who has signed in on this device before lands on log in.
+const RETURNING_KEY = 'cb_returning';
+function markReturning() { try { localStorage.setItem(RETURNING_KEY, '1'); } catch {} }
+function defaultAuthRoute() { try { return localStorage.getItem(RETURNING_KEY) ? 'login' : 'signup'; } catch { return 'signup'; } }
 
 // ---------- Router ----------
 const routes = { login: authView('login'), signup: authView('signup'), inbox, wall, admin: adminView, new: newMeetup, meetups, profile, notifications, invite: inviteDetail };
@@ -79,7 +83,11 @@ async function router() {
   if (location.pathname === '/admin' && location.hash && location.hash !== '#/admin') return location.replace('/' + location.hash);
   const [, name = location.pathname === '/admin' ? 'admin' : 'inbox', arg] = location.hash.split('/');
   if (!me && !['login', 'signup'].includes(name)) await refreshMe();
-  if (!me && !['login', 'signup'].includes(name)) return (location.hash = '#/login');
+  if (!me && !['login', 'signup'].includes(name)) {
+    // Remember a deep link (e.g. #/invite/42) so we can return there after auth.
+    if (location.hash && location.hash !== '#/' && location.hash !== '#/inbox') { try { sessionStorage.setItem('cb_next', location.hash); } catch {} }
+    return (location.hash = '#/' + defaultAuthRoute());
+  }
   if (me && ['login', 'signup'].includes(name)) return (location.hash = '#/inbox');
   $('#topbar').hidden = !me; $('#adminLink').hidden = !me?.is_admin; app.className = me ? 'container' : '';
   document.body.className = 'page-' + (routes[name] ? name : 'inbox');
@@ -103,7 +111,7 @@ function authView(mode) {
       <section class="hero"><svg class="art" viewBox="0 0 200 200" aria-hidden="true"><g class="steam" fill="none" stroke="#F7F1E8" stroke-width="5" stroke-linecap="round" opacity=".7"><path d="M78 52c-10-12 10-18 0-32"/><path d="M100 50c-10-12 10-18 0-32"/><path d="M122 52c-10-12 10-18 0-32"/></g><ellipse cx="100" cy="172" rx="78" ry="12" fill="#000" opacity=".18"/><path d="M38 70h124l-12 86a18 18 0 0 1-18 16H68a18 18 0 0 1-18-16z" fill="#F7F1E8"/><path d="M162 86h8a22 22 0 0 1 0 44h-12l2-12h10a10 10 0 0 0 0-20h-10z" fill="#F7F1E8"/><ellipse cx="100" cy="70" rx="62" ry="10" fill="#C8894B"/><ellipse cx="100" cy="70" rx="48" ry="6" fill="#8A5A30"/><path d="M58 108h84" stroke="#C8894B" stroke-width="6" stroke-linecap="round" opacity=".6"/></svg><div><div class="brand" style="color:var(--cream)">☕ CoffeeBuds</div></div>
         <div><h1>Learn something new,<br><em>one cup at a time.</em></h1>
         <p style="max-width:420px;opacity:.85">Meet neighbors over coffee to swap skills — from AI to cake decorating to career advice. Ask to learn, offer to teach, and we'll invite the right people within up to 15 miles.</p>
-        <div class="feats"><span>📖 Learn</span><span>🎓 Teach</span><span>📍 Matching within up to 15 miles</span></div></div><p class="foot small" style="opacity:.6">Tampa Bay · made with espresso</p></section>
+        <div class="feats"><span>📖 Learn</span><span>🎓 Teach</span><span>📍 Matching within up to 15 miles</span></div></div><p class="foot small" style="opacity:.6">made with espresso ☕</p></section>
       <section class="panel"><form class="card" id="f" novalidate>
         <h2>${isUp ? 'Create your account' : 'Welcome back'}</h2>
         <p class="muted small" style="margin-top:-4px">${isUp ? 'Takes 30 seconds.' : 'Log in to see your invites.'}</p>
@@ -112,14 +120,17 @@ function authView(mode) {
         <div class="field"><label for="email">Email</label><input id="email" type="email" autocomplete="email" maxlength="254" required></div>
         <div class="field"><label for="password">Password</label><input id="password" type="password" autocomplete="${isUp ? 'new-password' : 'current-password'}" minlength="${isUp ? 8 : 1}" maxlength="128" required></div>
         <button class="btn block" type="submit">${isUp ? 'Sign up' : 'Log in'}</button>
-        <p class="small muted" style="text-align:center;margin-top:16px">${isUp ? 'Already have an account? <a href="#/login">Log in</a>' : 'New here? <a href="#/signup">Create an account</a>'}</p>
+        <p class="small muted" style="text-align:center;margin-top:16px">${isUp ? 'Already a member? <a href="#/login" data-to-login>Log in</a>' : 'New here? <a href="#/signup">Create an account</a>'}</p>
         <p class="small muted install-row" style="text-align:center;margin-top:6px">${installControl('link')}</p>
       </form></section></div>`;
     bindInstall(app);
     $('#f').onsubmit = async (e) => {
       e.preventDefault();
       const body = { email: $('#email').value, password: $('#password').value, name: $('#name')?.value };
-      try { me = await api(isUp ? '/signup' : '/login', { method: 'POST', body }); location.hash = isUp ? '#/profile' : '#/inbox'; if (isUp) toast('Welcome! Add your location and topics to get matched.'); }
+      try {
+        me = await api(isUp ? '/signup' : '/login', { method: 'POST', body }); markReturning();
+        let next = null; try { next = sessionStorage.getItem('cb_next'); sessionStorage.removeItem('cb_next'); } catch {}
+        location.hash = isUp ? '#/profile' : (next && /^#\/[a-z]+(\/[\w-]+)?$/.test(next) ? next : '#/inbox'); if (isUp) toast('Welcome! Add your location and topics to get matched.'); }
       catch (err) { $('#err').innerHTML = `<div class="error">${esc(err.message)}</div>`; }
     };
   };
@@ -209,7 +220,7 @@ async function newMeetup() {
        <div class="shoplist" id="shoplist"><p class="small muted" style="padding:12px">Loading shops…</p></div></div></div>
      <details style="margin-top:14px"><summary class="small" style="cursor:pointer">Or type a shop manually</summary>
        <div class="grid two" style="margin-top:12px"><div class="field"><label>Shop name</label><input id="mName" placeholder="Corner Café"></div>
-       <div class="field"><label>Address</label><div class="row" style="flex-wrap:nowrap"><input id="mAddr" placeholder="123 Main St, Tampa"><button type="button" class="btn ghost sm" id="mGeo">Locate</button></div></div>
+       <div class="field"><label>Address</label><div class="row" style="flex-wrap:nowrap"><input id="mAddr" placeholder="123 Main St"><button type="button" class="btn ghost sm" id="mGeo">Locate</button></div></div>
        <div class="field"><label>Latitude</label><input id="mLat" inputmode="decimal"></div><div class="field"><label>Longitude</label><input id="mLng" inputmode="decimal"></div></div>
        <p class="small muted">Tip: click the map to drop a pin, or use “Locate”. <button type="button" class="btn sm" id="mUse">Use this shop</button></p></details>
      <p id="chosen" class="small" style="margin-top:10px"></p>
