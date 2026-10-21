@@ -20,6 +20,9 @@ label{display:block;font-weight:500;font-size:13px;margin:0 0 6px;color:var(--es
 input,select,textarea{width:100%;font:inherit;color:inherit;background:#fff;border:1px solid var(--line);border-radius:12px;padding:11px 13px;outline:none;transition:border .15s,box-shadow .15s}
 input:focus,select:focus,textarea:focus{border-color:var(--caramel);box-shadow:0 0 0 3px rgba(200,137,75,.18)}
 .field{margin-bottom:14px}
+.check.keep-signed-in{display:flex;align-items:center;gap:10px;margin:2px 0 4px;font-size:14px;color:var(--espresso);cursor:pointer}
+.check.keep-signed-in input{width:18px;height:18px;margin:0;padding:0;flex:none;accent-color:var(--car2);cursor:pointer}
+.keep-hint{margin:0 0 14px 28px;font-size:12px}
 .btn{display:inline-flex;align-items:center;justify-content:center;gap:6px;border:0;border-radius:999px;padding:11px 20px;font:600 14px Inter,sans-serif;cursor:pointer;background:var(--espresso);color:var(--cream);transition:transform .08s,background .15s;text-decoration:none}
 .btn:hover{background:#2a1d15}.btn:active{transform:scale(.98)}.btn:disabled{opacity:.5;cursor:default}
 .btn.caramel{background:var(--caramel);color:#fff}.btn.caramel:hover{background:var(--car2)}

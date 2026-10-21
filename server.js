@@ -56,8 +56,21 @@ const sessionOpts = {
   secret: process.env.SESSION_SECRET || 'dev-secret-change-me', resave: false, saveUninitialized: false,
   proxy: true, name: 'cb.sid',
   // Production: always Secure. Dev: 'auto' (Secure over HTTPS, plain on http://localhost).
-  cookie: { httpOnly: true, sameSite: 'lax', secure: PROD ? true : 'auto', maxAge: 1000 * 60 * 60 * 24 * 14 },
+  // No maxAge by default: cb.sid is a browser-session cookie (gone when the tab/browser closes).
+  // Login/signup with remember=true (the "Keep me signed in" box, or the installed app) upgrades it to a 14-day cookie.
+  cookie: { httpOnly: true, sameSite: 'lax', secure: PROD ? true : 'auto' },
 };
+const SESSION_TTL_MS = 1000 * 60 * 60 * 24 * 14; // server-side session lifetime (unchanged: 14 days)
+// Start a fresh authenticated session; persistent cookie only when the client asked to stay signed in.
+function startSession(req, res, userId, payload, status = 200) {
+  const remember = req.body?.remember === true;
+  req.session.regenerate((err) => {
+    if (err) return bad(res, 'Session error.', 500);
+    req.session.userId = userId; req.session.remember = remember;
+    req.session.cookie.maxAge = remember ? SESSION_TTL_MS : null; // null => no Max-Age/Expires (session cookie)
+    res.status(status).json(payload);
+  });
+}
 // Theme switcher (legacy): Paris is now the default for every visitor; the client ignores classic/lounge cookies.
 // The cookie handling below is kept but has no visible effect on the look.
 const THEMES = ['paris', 'lounge'];
@@ -143,7 +156,7 @@ app.post('/api/signup', signupLimiter, async (req, res) => {
   if (await db.get('SELECT id FROM users WHERE email=?', [e])) return bad(res, 'An account with that email already exists. Try logging in.', 409);
   const id = await db.run('INSERT INTO users(email,password_hash,name) VALUES (?,?,?)', [e, await bcrypt.hash(password, BCRYPT_COST), str(name, 80)]);
   const payload = await userPayload(id);
-  req.session.regenerate((err) => { if (err) return bad(res, 'Session error.', 500); req.session.userId = id; res.status(201).json(payload); });
+  startSession(req, res, id, payload, 201);
 });
 app.post('/api/login', loginLimiter, async (req, res) => {
   const { email, password } = req.body || {};
@@ -155,10 +168,10 @@ app.post('/api/login', loginLimiter, async (req, res) => {
   if (u.suspended_at) return bad(res, 'This account is suspended. Contact support if you think this is a mistake.', 403);
   if (bcrypt.getRounds(u.password_hash) < BCRYPT_COST) await db.run('UPDATE users SET password_hash=? WHERE id=?', [await bcrypt.hash(pw, BCRYPT_COST), u.id]); // upgrade legacy cost-10 hashes
   const payload = await userPayload(u.id);
-  req.session.regenerate((err) => { if (err) return bad(res, 'Session error.', 500); req.session.userId = u.id; res.json(payload); });
+  startSession(req, res, u.id, payload);
 });
 app.post('/api/logout', (req, res) => req.session.destroy(() => { res.clearCookie('cb.sid', { path: '/' }); res.json({ ok: true }); }));
-app.get('/api/me', auth, async (req, res) => res.json(await userPayload(req.session.userId)));
+app.get('/api/me', auth, async (req, res) => res.json({ ...(await userPayload(req.session.userId)), remember: !!req.session.remember }));
 
 // ---------- Profile ----------
 app.put('/api/profile', auth, async (req, res) => {
@@ -591,7 +604,7 @@ app.use((err, req, res, next) => {
   await db.init();
   await stats.init();
   console.log(`Database: ${db.isPg ? 'Postgres (DATABASE_URL)' : 'SQLite (sql.js) at ' + (process.env.DB_PATH || 'data/coffeebuds.sqlite')}`);
-  sessionMw = session({ ...sessionOpts, store: await require('./src/sessionStore').createStore() });
+  sessionMw = session({ ...sessionOpts, store: await require('./src/sessionStore').createStore({ ttlMs: SESSION_TTL_MS }) });
   if (PROD) await removeDemoAccounts();
   else if (await seed()) console.log('Seeded local demo data (dev only).');
   await coarsenHomeLocations();

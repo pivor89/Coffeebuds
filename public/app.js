@@ -76,12 +76,52 @@ const RETURNING_KEY = 'cb_returning';
 function markReturning() { try { localStorage.setItem(RETURNING_KEY, '1'); } catch {} }
 function defaultAuthRoute() { try { return localStorage.getItem(RETURNING_KEY) ? 'login' : 'signup'; } catch { return 'signup'; } }
 
+// Sign-out-on-close: a plain browser tab gets a session cookie (no Max-Age), so closing the browser ends the login.
+// Browsers that restore session cookies ("continue where you left off") are caught by a per-tab sessionStorage marker
+// set at login: no marker + a non-remembered session at startup => log out. The installed app always stays signed in.
+const ALIVE_KEY = 'cb_tab_alive';
+function isStandalone() {
+  try { return window.matchMedia('(display-mode: standalone)').matches || window.matchMedia('(display-mode: fullscreen)').matches || navigator.standalone === true; }
+  catch { return false; }
+}
+function markTabAlive() { try { sessionStorage.setItem(ALIVE_KEY, '1'); } catch {} }
+function tabAlive() { try { return sessionStorage.getItem(ALIVE_KEY) === '1'; } catch { return false; } }
+function clearTabAlive() { try { sessionStorage.removeItem(ALIVE_KEY); } catch {} }
+// Pure decision used at startup (and in tests): log out only a non-remembered session in a browser tab that never logged in.
+function shouldForceLogout({ hasSession, remember, standalone, alive }) { return !!hasSession && !remember && !standalone && !alive; }
+// A new tab opened while another CoffeeBuds tab is still open (e.g. from a link) inherits that tab's live login.
+const tabChannel = (() => { try { return new BroadcastChannel('cb_tabs'); } catch { return null; } })();
+if (tabChannel) tabChannel.onmessage = (e) => { if (e.data === 'ping' && tabAlive()) tabChannel.postMessage('pong'); };
+function anotherTabAlive(ms = 300) {
+  if (!tabChannel) return Promise.resolve(false);
+  return new Promise((res) => {
+    const done = (v) => { tabChannel.removeEventListener('message', on); clearTimeout(t); res(v); };
+    const on = (e) => { if (e.data === 'pong') done(true); };
+    const t = setTimeout(() => done(false), ms);
+    tabChannel.addEventListener('message', on); tabChannel.postMessage('ping');
+  });
+}
+let startupChecked = false;
+async function enforceSignOutOnClose() {
+  startupChecked = true;
+  if (isStandalone() || tabAlive()) return false;
+  try { me = await api('/me'); } catch { me = null; }
+  if (!shouldForceLogout({ hasSession: !!me, remember: !!me?.remember, standalone: false, alive: false })) { if (me) markTabAlive(); return false; }
+  if (await anotherTabAlive()) { markTabAlive(); return false; }
+  await api('/logout', { method: 'POST' }).catch(() => {}); me = null; setBadge(0);
+  return true;
+}
+
 // ---------- Router ----------
 const routes = { login: authView('login'), signup: authView('signup'), inbox, wall, admin: adminView, new: newMeetup, meetups, profile, notifications, invite: inviteDetail };
 async function router() {
   // /admin is a real server path (only served to admins); every other view is a hash route on /.
   if (location.pathname === '/admin' && location.hash && location.hash !== '#/admin') return location.replace('/' + location.hash);
   const [, name = location.pathname === '/admin' ? 'admin' : 'inbox', arg] = location.hash.split('/');
+  if (!startupChecked && await enforceSignOutOnClose()) {
+    if (!['login', 'signup'].includes(name) && location.hash && location.hash !== '#/' && location.hash !== '#/inbox') { try { sessionStorage.setItem('cb_next', location.hash); } catch {} }
+    if (location.hash !== '#/login') return (location.hash = '#/login');
+  }
   if (!me && !['login', 'signup'].includes(name)) await refreshMe();
   if (!me && !['login', 'signup'].includes(name)) {
     // Remember a deep link (e.g. #/invite/42) so we can return there after auth.
@@ -99,7 +139,7 @@ async function router() {
 addEventListener('hashchange', router);
 document.addEventListener('click', async (e) => {
   const lo = e.target.closest('[data-logout]'); if (!lo) return;
-  e.preventDefault(); await api('/logout', { method: 'POST' }).catch(() => {}); me = null; setBadge(0); location.hash = '#/login'; toast('Signed out. See you soon ☕');
+  e.preventDefault(); await api('/logout', { method: 'POST' }).catch(() => {}); clearTabAlive(); me = null; setBadge(0); location.hash = '#/login'; toast('Signed out. See you soon ☕');
 });
 setInterval(() => me && api('/me').then((u) => { me = u; setBadge(u.unread); }).catch(() => {}), 30000);
 
@@ -119,6 +159,8 @@ function authView(mode) {
         ${isUp ? '<div class="field"><label for="name">Name</label><input id="name" autocomplete="name" maxlength="80" required></div>' : ''}
         <div class="field"><label for="email">Email</label><input id="email" type="email" autocomplete="email" maxlength="254" required></div>
         <div class="field"><label for="password">Password</label><input id="password" type="password" autocomplete="${isUp ? 'new-password' : 'current-password'}" minlength="${isUp ? 8 : 1}" maxlength="128" required></div>
+        ${isStandalone() ? '' : `<label class="check keep-signed-in" for="remember"><input id="remember" type="checkbox"> <span>Keep me signed in</span></label>
+        <p class="small muted keep-hint">Leave unchecked on shared devices: you'll be signed out when you close this tab.</p>`}
         <button class="btn block" type="submit">${isUp ? 'Sign up' : 'Log in'}</button>
         <p class="small muted" style="text-align:center;margin-top:16px">${isUp ? 'Already a member? <a href="#/login" data-to-login>Log in</a>' : 'New here? <a href="#/signup">Create an account</a>'}</p>
         <p class="small muted install-row" style="text-align:center;margin-top:6px">${installControl('link')}</p>
@@ -126,9 +168,11 @@ function authView(mode) {
     bindInstall(app);
     $('#f').onsubmit = async (e) => {
       e.preventDefault();
-      const body = { email: $('#email').value, password: $('#password').value, name: $('#name')?.value };
+      // The installed app always stays signed in; in a browser tab it's the "Keep me signed in" box.
+      const remember = isStandalone() || !!$('#remember')?.checked;
+      const body = { email: $('#email').value, password: $('#password').value, name: $('#name')?.value, remember };
       try {
-        me = await api(isUp ? '/signup' : '/login', { method: 'POST', body }); markReturning();
+        me = await api(isUp ? '/signup' : '/login', { method: 'POST', body }); markReturning(); markTabAlive();
         let next = null; try { next = sessionStorage.getItem('cb_next'); sessionStorage.removeItem('cb_next'); } catch {}
         location.hash = isUp ? '#/profile' : (next && /^#\/[a-z]+(\/[\w-]+)?$/.test(next) ? next : '#/inbox'); if (isUp) toast('Welcome! Add your location and topics to get matched.'); }
       catch (err) { $('#err').innerHTML = `<div class="error">${esc(err.message)}</div>`; }
