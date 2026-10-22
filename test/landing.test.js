@@ -48,5 +48,5 @@ test('no city names in user-visible client files', () => {
 });
 
 test('service worker version bumped', () => {
-  assert.match(read('public/sw.js'), /const VERSION = 'v1\.3\.5'/);
+  assert.match(read('public/sw.js'), /const VERSION = 'v1\.3\.6'/);
 });

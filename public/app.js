@@ -113,22 +113,25 @@ async function enforceSignOutOnClose() {
 }
 
 // ---------- Router ----------
-const routes = { login: authView('login'), signup: authView('signup'), inbox, wall, admin: adminView, new: newMeetup, meetups, profile, notifications, invite: inviteDetail };
+// Views a logged-out visitor may open. Logged-in members visiting any of them go to #/inbox.
+const PUBLIC_ROUTES = ['login', 'signup', 'peek'];
+const routes = { login: authView('login'), signup: authView('signup'), peek: peekView, inbox, wall, admin: adminView, new: newMeetup, meetups, profile, notifications, invite: inviteDetail };
 async function router() {
   // /admin is a real server path (only served to admins); every other view is a hash route on /.
   if (location.pathname === '/admin' && location.hash && location.hash !== '#/admin') return location.replace('/' + location.hash);
   const [, name = location.pathname === '/admin' ? 'admin' : 'inbox', arg] = location.hash.split('/');
   if (!startupChecked && await enforceSignOutOnClose()) {
-    if (!['login', 'signup'].includes(name) && location.hash && location.hash !== '#/' && location.hash !== '#/inbox') { try { sessionStorage.setItem('cb_next', location.hash); } catch {} }
-    if (location.hash !== '#/login') return (location.hash = '#/login');
+    if (!PUBLIC_ROUTES.includes(name) && location.hash && location.hash !== '#/' && location.hash !== '#/inbox') { try { sessionStorage.setItem('cb_next', location.hash); } catch {} }
+    if (name !== 'peek' && location.hash !== '#/login') return (location.hash = '#/login');
   }
+  // #/peek is public, but we still check the session so members are sent to their normal home.
   if (!me && !['login', 'signup'].includes(name)) await refreshMe();
-  if (!me && !['login', 'signup'].includes(name)) {
+  if (!me && !PUBLIC_ROUTES.includes(name)) {
     // Remember a deep link (e.g. #/invite/42) so we can return there after auth.
     if (location.hash && location.hash !== '#/' && location.hash !== '#/inbox') { try { sessionStorage.setItem('cb_next', location.hash); } catch {} }
     return (location.hash = '#/' + defaultAuthRoute());
   }
-  if (me && ['login', 'signup'].includes(name)) return (location.hash = '#/inbox');
+  if (me && PUBLIC_ROUTES.includes(name)) return (location.hash = '#/inbox');
   $('#topbar').hidden = !me; $('#adminLink').hidden = !me?.is_admin; app.className = me ? 'container' : '';
   document.body.className = 'page-' + (routes[name] ? name : 'inbox');
   document.querySelectorAll('[data-nav]').forEach((a) => a.classList.toggle('active', a.dataset.nav === name));
@@ -151,7 +154,8 @@ function authView(mode) {
       <section class="hero"><svg class="art" viewBox="0 0 200 200" aria-hidden="true"><g class="steam" fill="none" stroke="#F7F1E8" stroke-width="5" stroke-linecap="round" opacity=".7"><path d="M78 52c-10-12 10-18 0-32"/><path d="M100 50c-10-12 10-18 0-32"/><path d="M122 52c-10-12 10-18 0-32"/></g><ellipse cx="100" cy="172" rx="78" ry="12" fill="#000" opacity=".18"/><path d="M38 70h124l-12 86a18 18 0 0 1-18 16H68a18 18 0 0 1-18-16z" fill="#F7F1E8"/><path d="M162 86h8a22 22 0 0 1 0 44h-12l2-12h10a10 10 0 0 0 0-20h-10z" fill="#F7F1E8"/><ellipse cx="100" cy="70" rx="62" ry="10" fill="#C8894B"/><ellipse cx="100" cy="70" rx="48" ry="6" fill="#8A5A30"/><path d="M58 108h84" stroke="#C8894B" stroke-width="6" stroke-linecap="round" opacity=".6"/></svg><div><div class="brand" style="color:var(--cream)">☕ CoffeeBuds</div></div>
         <div><h1>Learn something new,<br><em>one cup at a time.</em></h1>
         <p style="max-width:420px;opacity:.85">Meet neighbors over coffee to swap skills — from AI to cake decorating to career advice. Ask to learn, offer to teach, and we'll invite the right people within up to 15 miles.</p>
-        <div class="feats"><span>📖 Learn</span><span>🎓 Teach</span><span>📍 Matching within up to 15 miles</span></div></div><p class="foot small" style="opacity:.6">made with espresso ☕</p></section>
+        <div class="feats"><span>📖 Learn</span><span>🎓 Teach</span><span>📍 Matching within up to 15 miles</span></div>
+        <a class="hero-peek" href="#/peek" data-peek-link>👀 Peek inside first →</a></div><p class="foot small" style="opacity:.6">made with espresso ☕</p></section>
       <section class="panel"><form class="card" id="f" novalidate>
         <h2>${isUp ? 'Create your account' : 'Welcome back'}</h2>
         <p class="muted small" style="margin-top:-4px">${isUp ? 'Takes 30 seconds.' : 'Log in to see your invites.'}</p>
@@ -162,6 +166,7 @@ function authView(mode) {
         ${isStandalone() ? '' : `<label class="check keep-signed-in" for="remember"><input id="remember" type="checkbox"> <span>Keep me signed in</span></label>
         <p class="small muted keep-hint">Leave unchecked on shared devices: you'll be signed out when you close this tab.</p>`}
         <button class="btn block" type="submit">${isUp ? 'Sign up' : 'Log in'}</button>
+        ${isUp ? '<div class="or"><span>or</span></div><a class="btn ghost block peek-btn" href="#/peek" data-peek-link>👀 Peek inside first →</a><p class="small muted" style="text-align:center;margin:6px 0 0">See what people are learning nearby. No account needed.</p>' : ''}
         <p class="small muted" style="text-align:center;margin-top:16px">${isUp ? 'Already a member? <a href="#/login" data-to-login>Log in</a>' : 'New here? <a href="#/signup">Create an account</a>'}</p>
         <p class="small muted install-row" style="text-align:center;margin-top:6px">${installControl('link')}</p>
       </form></section></div>`;
@@ -178,6 +183,52 @@ function authView(mode) {
       catch (err) { $('#err').innerHTML = `<div class="error">${esc(err.message)}</div>`; }
     };
   };
+}
+
+// ---------- Public sneak peek (#/peek) ----------
+// Logged-out preview. Shows only what /api/public/peek returns (aggregated + anonymized, real data only).
+// Ideas are clearly labeled as ideas, never dressed up as member activity.
+const JOIN = (label = 'Join free to connect') => `<a class="btn caramel sm join-cta" href="#/signup">${label} →</a>`;
+const partOfDay = (d) => { const h = d.getHours(); return h < 12 ? 'morning' : h < 17 ? 'afternoon' : 'evening'; };
+const peekWhen = (iso) => { const d = new Date(iso); return `${d.toLocaleDateString([], { weekday: 'short', month: 'short', day: 'numeric' })} · ${partOfDay(d)}`; };
+const plural = (n, one, many) => `${n} ${n === 1 ? one : many}`;
+async function peekView() {
+  let d = null; try { d = await api('/public/peek'); } catch { d = null; }
+  const ideas = d?.ideas?.length ? d.ideas : ['Spanish', 'Guitar', 'AI tools', 'Sourdough', 'Resume help', 'Photography'];
+  const up = d?.upcoming || [], topics = (d?.topics || []).slice(0, 8), photos = d?.photos || [];
+  const hasLive = up.length || topics.length || photos.length;
+  const reqCard = (i) => `<article class="card peek-item">
+      <div class="row" style="gap:8px">${roleBadge(i.role)}<span class="small muted">${i.spots_left ? plural(i.spots_left, 'spot', 'spots') + ' left' : ''}</span></div>
+      <h3>${esc(i.topic)}</h3>
+      <div class="small muted">${i.host ? `${esc(i.host)} ${i.role === 'learn' ? 'wants to learn this' : 'can teach this'}` : (i.role === 'learn' ? 'A member wants to learn this' : 'A member can teach this')}</div>
+      <div class="meta"><span>☕ A local café</span><span>🗓 ${esc(peekWhen(i.starts_at))}</span><span>📍 Within ${esc(miles(i.within_mi))}</span></div>
+      <div class="peek-cta">${JOIN()}</div></article>`;
+  const topicCard = (t) => `<div class="peek-topic"><div><b>${esc(t.label)}</b><span class="small muted">${[t.learners ? `${t.learners} learning` : '', t.teachers ? `${t.teachers} teaching` : ''].filter(Boolean).join(' · ')}</span></div>
+      <a class="small" href="#/signup">Join free to connect →</a></div>`;
+  app.innerHTML = `<div class="peek">
+    <header class="peek-bar"><a href="#/signup" class="brand">☕ <span>CoffeeBuds</span></a><nav class="row" style="gap:8px"><a class="small" href="#/login">Log in</a><a class="btn caramel sm" href="#/signup">Join free</a></nav></header>
+    <section class="peek-hero"><p class="eyebrow">A peek inside</p><h1>Learn something new,<br><em>one cup at a time.</em></h1>
+      <p>Neighbors meet at local cafés to swap skills. Here's a look around. No account needed to look.</p></section>
+    ${up.length ? `<div class="section-title"><h2>Open coffee requests</h2><span class="small muted">real, from members</span></div><div class="stack">${up.map(reqCard).join('')}</div>` : ''}
+    ${photos.length ? `<div class="section-title"><h2>From recent meetups</h2></div><div class="peek-photos">${photos.map((p) => `<figure class="card peek-photo"><img src="${esc(p.image_url)}" alt="Coffee meetup photo" loading="lazy" ${p.width ? `width="${p.width}" height="${p.height}"` : ''}>
+      <figcaption>${p.topic ? `<span class="pill status-pending">${esc(p.topic)}</span>` : '<span class="small muted">Coffee meetup</span>'}${JOIN()}</figcaption></figure>`).join('')}</div>` : ''}
+    ${topics.length ? `<div class="section-title"><h2>What members want to learn &amp; teach</h2></div><div class="card"><div class="peek-topics">${topics.map(topicCard).join('')}</div></div>` : ''}
+    ${!up.length && !photos.length ? `<div class="card peek-early"><div class="icon">☕</div><h2>Early days. Grab the first table.</h2>
+      <p class="muted">CoffeeBuds is brand new, so there are no open meetups to show yet. We'll never fill this page with made-up activity. Start one and be one of the first in your area.</p>
+      ${JOIN('Be one of the first in your area')}</div>` : ''}
+    <div class="section-title"><h2>How it works</h2></div>
+    <ol class="peek-steps">
+      <li class="card"><span class="num">1</span><div><b>Ask to learn or offer to teach</b><p class="small muted">Pick a topic, a café and a time. Spanish, spreadsheets, sourdough: anything goes.</p></div></li>
+      <li class="card"><span class="num">2</span><div><b>We match people within up to 15 miles</b><p class="small muted">Neighbors with the opposite role on your topic get an invite. You choose the radius.</p></div></li>
+      <li class="card"><span class="num">3</span><div><b>Meet over coffee</b><p class="small muted">Always in a public café. Swap what you know, make a friend.</p></div></li></ol>
+    <div class="section-title"><h2>Popular things to learn over coffee</h2></div>
+    <div class="card"><p class="small muted" style="margin-top:0">Ideas to get you started. These are prompts, not posts from members.</p>
+      <div class="chips">${ideas.map((t) => `<a class="chip suggest idea" href="#/signup">💡 ${esc(t)}</a>`).join('')}</div></div>
+    <section class="card peek-final"><h2>Be one of the first in your area</h2><p>Free, takes 30 seconds. Your exact address is never shown to anyone.</p>
+      <a class="btn caramel block" href="#/signup">Join free to connect →</a><p class="small" style="text-align:center;margin:12px 0 0">Already a member? <a href="#/login">Log in</a></p></section>
+    <p class="small muted peek-privacy">${hasLive ? 'Members are shown by first initial only, with rough distance. Never names, addresses or exact locations.' : 'When members post, you\'ll see first initials and rough distance only. Never names, addresses or exact locations.'}</p>
+    <p class="foot small muted" style="text-align:center;opacity:.7">made with espresso ☕</p></div>`;
+  window.scrollTo(0, 0);
 }
 
 // ---------- Invite card ----------

@@ -8,6 +8,7 @@ const db = require('./src/db');
 const { seed, removeDemoAccounts, coarsenHomeLocations, deleteUserCascade } = require('./src/seed');
 const stats = require('./src/stats');
 const images = require('./src/images');
+const peek = require('./src/peek');
 const { findRecipients, normalizeTopic, haversineMiles, clampRadius, MATCH_RADIUS_MI } = require('./src/matching');
 
 const app = express();
@@ -590,6 +591,14 @@ app.post('/api/users/:id/report', auth, reportLimiter, async (req, res) => {
   res.status(201).json({ ok: true });
 });
 
+// ---------- Public sneak peek (logged-out, read-only) ----------
+// No auth, no session needed. Only aggregated/anonymized data (see src/peek.js); cached 60s server-side and rate-limited per IP.
+const peekLimiter = limiter(1, 60, 'Too many requests. Please try again in a minute.');
+const getPeek = peek.cachedPeek(db, Number(process.env.PEEK_CACHE_MS ?? 60e3));
+app.get('/api/public/peek', peekLimiter, async (req, res) => {
+  try { const data = await getPeek(); res.set('Cache-Control', 'public, max-age=60'); res.json(data); }
+  catch (e) { console.error('peek:', e.message); bad(res, 'Preview is unavailable right now.', 503); }
+});
 app.get('/api/stats', stats.handler);
 app.use('/api', (req, res) => bad(res, 'Not found', 404));
 app.get(/^(?!\/api).*/, (req, res) => res.sendFile(path.join(__dirname, 'public', 'index.html')));
